@@ -6,30 +6,6 @@ from common.range import Range
 
 
 class CarSearchFilter:
-    class Manufacturer(IntEnum):
-        AUDI = 1
-        OPEL = 2
-        ALPHA_ROMEO = 5
-        BMW = 7
-        HONDA = 17
-        TOYOTA = 19
-        HYUNDAI = 21
-        MAZDA = 27
-        MITSUBISHI = 30
-        MERCEDES_BENZ = 31
-        NISAN = 32
-        SUBARU = 35
-        SUZUKI = 36
-        SEAT = 37
-        CITROEN = 38
-        SKODA = 40
-        FIAT = 45
-        KIA = 48
-
-    class Model(IntEnum):
-        PICANTO = 10711
-        C3 = 10517
-
     class GearBox(IntEnum):
         MANUAL = 101
         AUTO = 102
@@ -57,13 +33,13 @@ class CarSearchFilter:
         IMAGE_ONLY = "imgOnly"
 
     @staticmethod
-    def get_selections_as_string(selections: list[IntEnum]) -> str:
-        return ",".join(str(s.value) for s in selections)
+    def get_selections_as_string(selections: list[int | IntEnum]) -> str:
+        return ",".join(str(int(selection)) for selection in selections)
 
     def __init__(
         self,
-        manufacturers: list[Manufacturer] | None = None,
-        models: list[Model] | None = None,
+        manufacturers: list[int] | None = None,
+        models: list[int] | None = None,
         gear_boxes: list[GearBox] | None = None,
         year_range: Range | None = None,
         hand_range: Range | None = None,

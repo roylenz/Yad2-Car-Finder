@@ -1,5 +1,6 @@
 from typing import NamedTuple
 
+from car.catalog import MANUFACTURERS, MANUFACTURER_BY_ID, model_name, models_for
 from car.car_search_filter import CarSearchFilter
 from common.logger import logger
 from common.range import Range
@@ -7,6 +8,7 @@ from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 
 from bot.keyboards import (
+    PAGE_SIZE,
     build_confirm_keyboard,
     build_interval_keyboard,
     build_manufacturer_keyboard,
@@ -93,7 +95,7 @@ async def search_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     context.chat_data["year_max"] = None
     context.chat_data["scan_interval"] = 10
 
-    text = "Select manufacturer(s), then tap *Next*:"
+    text = "Select up to 4 manufacturers, then tap *Next*:"
     keyboard = build_manufacturer_keyboard(set())
 
     if update.callback_query:
@@ -112,16 +114,30 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
     data = query.data
     selected: set[int] = context.chat_data.get("selected_manufacturers", set())
 
-    if data.startswith("mfr_toggle:"):
+    if data.startswith("mfr_page:"):
         await query.answer()
-        value = int(data.split(":")[1])
+        page = int(data.split(":")[1])
+        if 0 <= page < (len(MANUFACTURERS) + PAGE_SIZE - 1) // PAGE_SIZE:
+            await query.edit_message_reply_markup(reply_markup=build_manufacturer_keyboard(selected, page))
+        return SELECTING_MANUFACTURER
+
+    if data == "mfr_count":
+        await query.answer(f"{len(selected)} of 4 manufacturers selected")
+        return SELECTING_MANUFACTURER
+
+    if data.startswith("mfr_toggle:"):
+        _, raw_value, raw_page = data.split(":")
+        value, page = int(raw_value), int(raw_page)
+        if value not in MANUFACTURER_BY_ID:
+            await query.answer("Unknown manufacturer", show_alert=True)
+            return SELECTING_MANUFACTURER
+        if value not in selected and len(selected) >= 4:
+            await query.answer("Yad2 allows up to 4 manufacturers", show_alert=True)
+            return SELECTING_MANUFACTURER
+        await query.answer()
         selected.symmetric_difference_update({value})
         context.chat_data["selected_manufacturers"] = selected
-        await query.edit_message_text(
-            "Select manufacturer(s), then tap *Next*:",
-            parse_mode="Markdown",
-            reply_markup=build_manufacturer_keyboard(selected),
-        )
+        await query.edit_message_reply_markup(reply_markup=build_manufacturer_keyboard(selected, page))
         return SELECTING_MANUFACTURER
 
     if data == "mfr_done":
@@ -131,9 +147,9 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
         await query.answer()
         await query.edit_message_text(
-            "Select model(s), or tap *Skip* / *Next*:",
+            "Select up to 10 models, or tap *Skip* / *Next*:",
             parse_mode="Markdown",
-            reply_markup=build_model_keyboard(set()),
+            reply_markup=build_model_keyboard(set(), selected),
         )
         return SELECTING_MODEL
 
@@ -145,21 +161,42 @@ async def model_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     query = update.callback_query
     data = query.data
     selected: set[int] = context.chat_data.get("selected_models", set())
+    manufacturer_ids = context.chat_data.get("selected_manufacturers", set())
+
+    if data.startswith("mdl_page:"):
+        await query.answer()
+        page = int(data.split(":")[1])
+        if 0 <= page < max(1, (len(models_for(manufacturer_ids)) + PAGE_SIZE - 1) // PAGE_SIZE):
+            await query.edit_message_reply_markup(
+                reply_markup=build_model_keyboard(selected, manufacturer_ids, page)
+            )
+        return SELECTING_MODEL
+
+    if data == "mdl_count":
+        await query.answer(f"{len(selected)} of 10 models selected")
+        return SELECTING_MODEL
 
     if data.startswith("mdl_toggle:"):
+        _, raw_value, raw_page = data.split(":")
+        value, page = int(raw_value), int(raw_page)
+        if value not in {model["id"] for model in models_for(manufacturer_ids)}:
+            await query.answer("Unknown model", show_alert=True)
+            return SELECTING_MODEL
+        if value not in selected and len(selected) >= 10:
+            await query.answer("Yad2 allows up to 10 models", show_alert=True)
+            return SELECTING_MODEL
         await query.answer()
-        value = int(data.split(":")[1])
         selected.symmetric_difference_update({value})
         context.chat_data["selected_models"] = selected
-        await query.edit_message_text(
-            "Select model(s), or tap *Skip* / *Next*:",
-            parse_mode="Markdown",
-            reply_markup=build_model_keyboard(selected),
+        await query.edit_message_reply_markup(
+            reply_markup=build_model_keyboard(selected, manufacturer_ids, page)
         )
         return SELECTING_MODEL
 
     if data in ("mdl_done", "mdl_skip"):
         await query.answer()
+        if data == "mdl_skip":
+            context.chat_data["selected_models"] = set()
         await query.edit_message_text(
             "Select minimum year, or tap *Skip*:",
             parse_mode="Markdown",
@@ -372,14 +409,8 @@ def _remove_scan_jobs(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
 
 
 def _build_car_filter(chat_data: dict) -> CarSearchFilter:
-    manufacturers = [
-        m
-        for m in CarSearchFilter.Manufacturer
-        if m.value in chat_data.get("selected_manufacturers", set())
-    ]
-    models = [
-        m for m in CarSearchFilter.Model if m.value in chat_data.get("selected_models", set())
-    ]
+    manufacturers = sorted(chat_data.get("selected_manufacturers", set()))
+    models = sorted(chat_data.get("selected_models", set()))
 
     year_min = chat_data.get("year_min")
     year_max = chat_data.get("year_max")
@@ -402,18 +433,12 @@ def _build_filter_summary(chat_data: dict) -> str:
 
     mfr_values = chat_data.get("selected_manufacturers", set())
     if mfr_values:
-        names = [
-            m.name.replace("_", " ").title()
-            for m in CarSearchFilter.Manufacturer
-            if m.value in mfr_values
-        ]
+        names = [MANUFACTURER_BY_ID[value]["name"] for value in sorted(mfr_values)]
         lines.append(f"🏭 Manufacturers: {', '.join(names)}")
 
     mdl_values = chat_data.get("selected_models", set())
     if mdl_values:
-        names = [
-            m.name.replace("_", " ").title() for m in CarSearchFilter.Model if m.value in mdl_values
-        ]
+        names = [model_name(value, mfr_values) for value in sorted(mdl_values)]
         lines.append(f"🚙 Models: {', '.join(names)}")
 
     year_min = chat_data.get("year_min")

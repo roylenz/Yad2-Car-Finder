@@ -8,6 +8,8 @@ Telegram bot that scrapes [Yad2](https://www.yad2.co.il/vehicles/cars) for car l
 - **Structured logging** - colored console output with structured JSON kwargs, configurable log level via `LOG_LEVEL` env var
 - **Bot commands** - `/start`, `/search`, `/stop`, `/status`
 
+The manufacturer picker includes 122 makes from a [Yad2 API catalog snapshot](https://github.com/SRaz-Sw/Local-Whisper-Diarization/blob/main/nextjs-v1/public/data/yad2-mappings.json) dated 20 August 2025. The model picker shows models for the selected makes. Yad2 may add makes or models after that snapshot.
+
 ## Setup
 
 ### Docker Compose (recommended for Raspberry Pi)
