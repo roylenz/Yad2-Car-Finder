@@ -19,8 +19,10 @@ class CatalogTests(unittest.TestCase):
                 if button.callback_data.startswith("mfr_toggle:")
             )
         self.assertEqual(shown_ids, {manufacturer["id"] for manufacturer in MANUFACTURERS})
+        self.assertEqual(len(shown_ids), 127)
         self.assertIn(62, shown_ids)  # Tesla
         self.assertIn(18, shown_ids)  # Volvo
+        self.assertIn(369, shown_ids)  # Omoda
 
     def test_models_follow_selected_manufacturer(self):
         tesla_models = models_for({62})
