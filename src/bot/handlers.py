@@ -69,9 +69,18 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text(
         "🚗 *Yad2 Car Finder Bot*\n\n"
         "I'll alert you about new cars and price drops, with prices and mileage.\n\n"
-        "Send me a Yad2 car search URL, or use the button to set filters:",
+        "Paste a Yad2 car search URL in your next message, or choose an option below:",
         parse_mode="Markdown",
         reply_markup=build_start_keyboard(),
+    )
+
+
+async def search_link_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text(
+        "Open Yad2, set your car filters, then copy the search page URL and paste it here "
+        "as a message. I'll start checking it every 10 minutes."
     )
 
 

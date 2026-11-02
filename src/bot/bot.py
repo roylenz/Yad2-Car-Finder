@@ -23,6 +23,7 @@ from bot.handlers import (
     manufacturer_callback,
     model_callback,
     search_entry,
+    search_link_prompt,
     start_command,
     status_command,
     stop_command,
@@ -92,6 +93,7 @@ def create_bot() -> Application:
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(search_conversation)
+    app.add_handler(CallbackQueryHandler(search_link_prompt, pattern="^use_search_link$"))
     app.add_handler(url_handler)
     app.add_handler(CommandHandler("stop", stop_command))
     app.add_handler(CommandHandler("status", status_command))

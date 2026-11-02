@@ -10,7 +10,10 @@ PAGE_SIZE = 20
 
 def build_start_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("🔍 New Search", callback_data="new_search")]]
+        [
+            [InlineKeyboardButton("🔗 Use a Yad2 search link", callback_data="use_search_link")],
+            [InlineKeyboardButton("🔍 Choose filters here", callback_data="new_search")],
+        ]
     )
 
 
