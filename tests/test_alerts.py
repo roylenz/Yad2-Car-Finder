@@ -5,6 +5,8 @@ from pathlib import Path
 
 from bot.scanner import detect_changes, format_listing
 from bot.state import BotState
+from bot.access import AccessControl
+from bot.scanner import Scanner
 from car.car_finder import Yad2CarFinder
 from car.listing import CarListing
 from car.search_url import normalize_search_url
@@ -57,6 +59,39 @@ class AlertTests(unittest.TestCase):
             state.save_listings(123, [CarListing("https://www.yad2.co.il/vehicles/item/abc", "Car", 1)])
             state.set_search(123, EXAMPLE_URL.replace("manufacturer=334", "manufacturer=62"), 10)
             self.assertEqual(state.seen_count(123), 0)
+
+
+class AccessTests(unittest.TestCase):
+    def test_first_user_claims_admin_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "bot.sqlite3")
+            state = BotState(path)
+            self.assertTrue(state.claim_first_admin(123, False))
+            self.assertFalse(BotState(path).claim_first_admin(456, False))
+            self.assertTrue(BotState(path).is_admin(123))
+            self.assertFalse(BotState(path).is_admin(456))
+
+    def test_configured_admin_prevents_bootstrap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = BotState(str(Path(directory) / "bot.sqlite3"))
+            self.assertFalse(state.claim_first_admin(123, True))
+            self.assertFalse(state.claim_first_admin(456, False))
+
+    def test_request_approval_persists_and_promoted_admin_is_allowed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "bot.sqlite3")
+            state = BotState(path)
+            state.request_access(456, "Jane Smith")
+            self.assertEqual(state.pending_requests(), [(456, "Jane Smith")])
+            self.assertTrue(state.resolve_request(456, True))
+            self.assertFalse(state.resolve_request(456, True))
+            access = AccessControl(Scanner(BotState(path)))
+            self.assertTrue(access.is_allowed(456))
+            state.set_admin(456, True)
+            self.assertTrue(access.is_admin(456))
+            state.set_admin(456, False)
+            state.set_access(456, False)
+            self.assertFalse(access.is_allowed(456))
 
 
 class FeedTests(unittest.IsolatedAsyncioTestCase):

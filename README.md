@@ -7,6 +7,7 @@ Telegram bot that scrapes [Yad2](https://www.yad2.co.il/vehicles/cars) for car l
 - **Search URL alerts** - send a filtered Yad2 car search URL directly to the bot; it checks every 10 minutes
 - **New car and price drop alerts** - messages include the listing price, mileage, and link
 - **Persistent tracking** - searches and last seen prices survive container restarts
+- **Private access** - users request access with their name; admins approve requests and can promote other admins
 - **Structured logging** - colored console output with structured JSON kwargs, configurable log level via `LOG_LEVEL` env var
 - **Bot commands** - `/start`, `/search`, `/stop`, `/status`
 
@@ -17,8 +18,10 @@ The manufacturer picker includes all 127 makes shown in Yad2's car search filter
 ### Docker Compose (recommended for Raspberry Pi)
 
 Install Docker and the Compose plugin, then create a private `.env` file from
-`.env.example` and set `TELEGRAM_BOT_TOKEN` to your BotFather token. Keep the
-token out of Git.
+`.env.example` and set `TELEGRAM_BOT_TOKEN` to your BotFather token. Optionally
+set `TELEGRAM_ADMIN_IDS` to comma-separated Telegram user IDs. If it is empty on
+a fresh installation, the first person to message the bot becomes an admin.
+Keep the token out of Git.
 
 ```bash
 cp .env.example .env
@@ -57,6 +60,8 @@ Create `.env` file and set your Telegram bot token:
 
 ```
 TELEGRAM_BOT_TOKEN=your-token-here
+TELEGRAM_ADMIN_IDS=
+TELEGRAM_WHITELIST_IDS=
 ```
 
 ### Running
@@ -66,6 +71,15 @@ python3 src/main.py
 ```
 
 Then open your bot in Telegram and send `/start`
+
+New users send `/request Their Name`. Each admin receives an Approve/Deny button
+and can also use `/requests` to see pending requests and `/allow <user ID>` to
+approve one. Admins can use `/deny <user ID>` to remove access, `/promote <user ID>`
+and `/demote <user ID>` to manage admins, and `/whitelist` to list access. `/id`
+shows a person's Telegram user ID. Users approved by an admin can use the bot.
+Access decisions and promoted admins survive restarts. `TELEGRAM_ADMIN_IDS` and
+`TELEGRAM_WHITELIST_IDS` in `.env` are optional initial lists. Users listed as
+admins in `.env` remain admins until removed from that file.
 
 You can also send a filtered Yad2 car search URL directly, for example:
 
@@ -80,7 +94,7 @@ mileage for a car, the alert says "Not listed" for that field.
 
 ## Usage
 
-1. `/start` - welcome message with a "New Search" button
+1. `/start` - welcome message with search link and filter buttons (or access instructions for new users)
 2. `/search` - configure a new search (manufacturer, model, year range, scan interval)
 3. `/stop` - stop the active scan
 4. `/status` - show current scan configuration and how many cars have been found

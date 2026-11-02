@@ -7,9 +7,12 @@ from telegram.ext import (
     CommandHandler,
     ConversationHandler,
     MessageHandler,
+    TypeHandler,
     filters,
 )
+from telegram import Update
 
+from bot.access import AccessControl
 from bot.handlers import (
     CONFIRMING,
     SELECTING_INTERVAL,
@@ -37,7 +40,8 @@ from bot.scanner import schedule_scan
 
 async def restore_searches(app: Application) -> None:
     for chat_id, url, interval in scanner.state.active_searches():
-        schedule_scan(app.job_queue, scanner, chat_id, url, interval, first=5)
+        if scanner.access_check(chat_id):
+            schedule_scan(app.job_queue, scanner, chat_id, url, interval, first=5)
     logger.info("Restored saved searches", count=len(scanner.state.active_searches()))
 
 
@@ -55,6 +59,8 @@ def create_bot() -> Application:
         ) from e
 
     url_handler = MessageHandler(filters.TEXT & filters.Regex(r"^https?://"), url_search_message)
+    access = AccessControl(scanner)
+    scanner.access_check = access.is_allowed
 
     search_conversation = ConversationHandler(
         entry_points=[
@@ -91,12 +97,16 @@ def create_bot() -> Application:
         per_message=False,
     )
 
+    app.add_handler(TypeHandler(Update, access.guard), group=-1)
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(search_conversation)
     app.add_handler(CallbackQueryHandler(search_link_prompt, pattern="^use_search_link$"))
+    app.add_handler(CallbackQueryHandler(access.request_callback, pattern=r"^access_(approve|deny):[0-9]+$"))
     app.add_handler(url_handler)
     app.add_handler(CommandHandler("stop", stop_command))
     app.add_handler(CommandHandler("status", status_command))
+    for command in ("allow", "deny", "whitelist", "requests", "promote", "demote"):
+        app.add_handler(CommandHandler(command, access.admin_command))
     app.add_error_handler(error_handler)
 
     logger.info("Bot handlers registered successfully")

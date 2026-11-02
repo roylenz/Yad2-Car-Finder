@@ -1,6 +1,7 @@
 """Scheduled listing scans and Telegram change alerts."""
 
 import asyncio
+from typing import Callable
 
 from car.car_finder import Yad2CarFinder
 from car.listing import CarListing
@@ -76,6 +77,7 @@ class Scanner:
     def __init__(self, state: BotState | None = None) -> None:
         self.state = state or BotState()
         self._scan_locks: dict[int, asyncio.Lock] = {}
+        self.access_check: Callable[[int], bool] = lambda _chat_id: True
 
     def _get_lock(self, chat_id: int) -> asyncio.Lock:
         if chat_id not in self._scan_locks:
@@ -89,7 +91,7 @@ class Scanner:
         chat_id = context.job.chat_id
         url = context.job.data
         active = self.state.get_search(chat_id)
-        if active is None or active[0] != url:
+        if active is None or active[0] != url or not self.access_check(chat_id):
             return
 
         lock = self._get_lock(chat_id)
@@ -127,7 +129,7 @@ class Scanner:
             return
 
         active = self.state.get_search(chat_id)
-        if active is None or active[0] != url:
+        if active is None or active[0] != url or not self.access_check(chat_id):
             return
 
         new, drops = detect_changes(previous, results)

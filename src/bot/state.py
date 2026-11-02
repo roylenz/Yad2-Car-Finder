@@ -24,6 +24,15 @@ class BotState:
                 "chat_id INTEGER NOT NULL, url TEXT NOT NULL, title TEXT NOT NULL, "
                 "price INTEGER, km INTEGER, PRIMARY KEY (chat_id, url))"
             )
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS access (user_id INTEGER PRIMARY KEY, allowed INTEGER NOT NULL)"
+            )
+            db.execute("CREATE TABLE IF NOT EXISTS admins (user_id INTEGER PRIMARY KEY)")
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS access_requests ("
+                "user_id INTEGER PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL)"
+            )
+            db.execute("CREATE TABLE IF NOT EXISTS access_meta (key TEXT PRIMARY KEY)")
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -83,3 +92,85 @@ class BotState:
     def seen_count(self, chat_id: int) -> int:
         with self._connect() as db:
             return db.execute("SELECT COUNT(*) FROM listings WHERE chat_id=?", (chat_id,)).fetchone()[0]
+
+    def access_override(self, user_id: int) -> bool | None:
+        with self._connect() as db:
+            row = db.execute("SELECT allowed FROM access WHERE user_id=?", (user_id,)).fetchone()
+        return bool(row[0]) if row else None
+
+    def set_access(self, user_id: int, allowed: bool) -> None:
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO access(user_id,allowed) VALUES (?,?) "
+                "ON CONFLICT(user_id) DO UPDATE SET allowed=excluded.allowed",
+                (user_id, int(allowed)),
+            )
+
+    def access_overrides(self) -> dict[int, bool]:
+        with self._connect() as db:
+            rows = db.execute("SELECT user_id, allowed FROM access").fetchall()
+        return {user_id: bool(allowed) for user_id, allowed in rows}
+
+    def claim_first_admin(self, user_id: int, configured_admins: bool) -> bool:
+        """Atomically claim bootstrap once, even if two users message together."""
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if configured_admins:
+                db.execute("INSERT OR IGNORE INTO access_meta(key) VALUES ('bootstrapped')")
+                return False
+            if db.execute(
+                "SELECT 1 FROM access_meta WHERE key='bootstrapped'"
+            ).fetchone():
+                return False
+            db.execute("INSERT INTO admins(user_id) VALUES (?)", (user_id,))
+            db.execute("INSERT INTO access_meta(key) VALUES ('bootstrapped')")
+            return True
+
+    def is_admin(self, user_id: int) -> bool:
+        with self._connect() as db:
+            return db.execute("SELECT 1 FROM admins WHERE user_id=?", (user_id,)).fetchone() is not None
+
+    def admin_ids(self) -> set[int]:
+        with self._connect() as db:
+            return {row[0] for row in db.execute("SELECT user_id FROM admins")}
+
+    def set_admin(self, user_id: int, admin: bool) -> None:
+        with self._connect() as db:
+            if admin:
+                db.execute("INSERT OR IGNORE INTO admins(user_id) VALUES (?)", (user_id,))
+            else:
+                db.execute("DELETE FROM admins WHERE user_id=?", (user_id,))
+
+    def request_access(self, user_id: int, name: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO access_requests(user_id,name,status) VALUES (?,?,'pending') "
+                "ON CONFLICT(user_id) DO UPDATE SET name=excluded.name,status='pending'",
+                (user_id, name),
+            )
+
+    def access_request(self, user_id: int) -> tuple[str, str] | None:
+        with self._connect() as db:
+            return db.execute(
+                "SELECT name,status FROM access_requests WHERE user_id=?", (user_id,)
+            ).fetchone()
+
+    def pending_requests(self) -> list[tuple[int, str]]:
+        with self._connect() as db:
+            return db.execute(
+                "SELECT user_id,name FROM access_requests WHERE status='pending' ORDER BY rowid"
+            ).fetchall()
+
+    def resolve_request(self, user_id: int, approved: bool) -> bool:
+        with self._connect() as db:
+            cursor = db.execute(
+                "UPDATE access_requests SET status=? WHERE user_id=? AND status='pending'",
+                ("approved" if approved else "denied", user_id),
+            )
+            if cursor.rowcount and approved:
+                db.execute(
+                    "INSERT INTO access(user_id,allowed) VALUES (?,1) "
+                    "ON CONFLICT(user_id) DO UPDATE SET allowed=1",
+                    (user_id,),
+                )
+            return cursor.rowcount > 0
