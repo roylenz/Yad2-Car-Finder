@@ -17,7 +17,7 @@ EXAMPLE_URL = (
 
 class SearchUrlTests(unittest.TestCase):
     def test_example_filters_are_kept_and_page_is_removed(self):
-        self.assertEqual(normalize_search_url(EXAMPLE_URL + "&page=3"), EXAMPLE_URL)
+        self.assertEqual(normalize_search_url(EXAMPLE_URL + "&page=3&utm_source=test"), EXAMPLE_URL)
 
     def test_only_yad2_car_search_urls_are_accepted(self):
         for url in (
