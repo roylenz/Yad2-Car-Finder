@@ -10,6 +10,7 @@ Telegram bot that scrapes [Yad2](https://www.yad2.co.il/vehicles/cars) for car l
 - **Private access** - users request access with their name; admins approve requests and can promote other admins
 - **Structured logging** - colored console output with structured JSON kwargs, configurable log level via `LOG_LEVEL` env var
 - **Bot commands** - `/start`, `/search`, `/stop`, `/status`
+- **Command menu** - tap Telegram's Menu button to see commands; admins also see access controls
 
 The manufacturer picker includes all 127 makes shown in Yad2's car search filter on 2 November 2026. Model IDs come from a [Yad2 API catalog snapshot](https://github.com/SRaz-Sw/Local-Whisper-Diarization/blob/main/nextjs-v1/public/data/yad2-mappings.json) dated 20 August 2025, with current models for the five newer makes when Yad2 offered them. The model picker shows models for the selected makes. Yad2 may add makes or models after these snapshots.
 
@@ -94,7 +95,8 @@ mileage for a car, the alert says "Not listed" for that field.
 
 ## Usage
 
-1. `/start` - welcome message with search link and filter buttons (or access instructions for new users)
-2. `/search` - configure a new search (manufacturer, model, year range, scan interval)
-3. `/stop` - stop the active scan
-4. `/status` - show current scan configuration and how many cars have been found
+1. Tap **Menu** next to the message box to see the available commands, or tap **Commands** after `/start`
+2. `/start` - welcome message with search link and filter buttons (or access instructions for new users)
+3. `/search` - configure a new search (manufacturer, model, year range, scan interval)
+4. `/stop` - stop the active scan
+5. `/status` - show current scan configuration and how many cars have been found

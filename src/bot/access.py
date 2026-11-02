@@ -7,6 +7,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from bot.scanner import Scanner
+from bot.menu import set_admin_menu
 
 
 def parse_ids(value: str) -> set[int]:
@@ -45,6 +46,7 @@ class AccessControl:
                 await update.callback_query.answer("Please use this bot in a private chat.", show_alert=True)
             raise ApplicationHandlerStop
         if update.message and self.scanner.state.claim_first_admin(user.id, bool(self.configured_admins)):
+            await set_admin_menu(context.bot, user.id, True)
             await update.message.reply_text(
                 "You are the first user of this bot, so you are now an admin. "
                 "Use /requests to review access requests and /promote <user ID> to add admins."
@@ -56,6 +58,12 @@ class AccessControl:
                 command = words[0].split("@")[0]
         if command == "/id":
             await update.message.reply_text(f"Your Telegram user ID: {user.id}")
+            raise ApplicationHandlerStop
+        if command == "/help":
+            await self.help_command(update, context)
+            raise ApplicationHandlerStop
+        if update.callback_query and update.callback_query.data == "show_commands":
+            await self.help_command(update, context)
             raise ApplicationHandlerStop
         if self.is_allowed(user.id):
             return
@@ -69,6 +77,38 @@ class AccessControl:
         elif update.callback_query:
             await update.callback_query.answer("Access requires approval. Send /request with your name.", show_alert=True)
         raise ApplicationHandlerStop
+
+    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = update.effective_user.id
+        if self.is_allowed(user_id):
+            lines = [
+                "/start — Open the bot",
+                "/search — Choose car filters",
+                "Paste a Yad2 car search URL — Start alerts from its filters",
+                "/status — Show your active search",
+                "/stop — Stop your alerts",
+                "/id — Show your Telegram user ID",
+            ]
+            if self.is_admin(user_id):
+                lines.extend([
+                    "/requests — Show pending access requests",
+                    "/whitelist — Show allowed users and admins",
+                    "/allow <ID> — Approve a user",
+                    "/deny <ID> — Remove a user's access",
+                    "/promote <ID> — Make an approved user an admin",
+                    "/demote <ID> — Remove an admin role",
+                ])
+        else:
+            lines = [
+                "/request Your Name — Request access",
+                "/id — Show your Telegram user ID",
+            ]
+        text = "Available commands:\n\n" + "\n".join(lines)
+        if update.callback_query:
+            await update.callback_query.answer()
+            await update.callback_query.message.reply_text(text)
+        else:
+            await update.message.reply_text(text)
 
     async def request_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         name = update.message.text.partition(" ")[2].strip()
@@ -157,6 +197,7 @@ class AccessControl:
                 await update.message.reply_text("Approve this user before promoting them.")
                 return
             self.scanner.state.set_admin(user_id, True)
+            await set_admin_menu(context.bot, user_id, True)
             await update.message.reply_text(f"Promoted {user_id} to admin.")
             return
         if command == "/demote":
@@ -170,6 +211,7 @@ class AccessControl:
                 await update.message.reply_text("Promote another admin first.")
                 return
             self.scanner.state.set_admin(user_id, False)
+            await set_admin_menu(context.bot, user_id, False)
             await update.message.reply_text(f"Demoted {user_id} to an allowed user.")
             return
         if command == "/deny" and self.is_admin(user_id):

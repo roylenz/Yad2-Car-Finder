@@ -9,6 +9,7 @@ from bot.scanner import detect_changes, format_listing
 from bot.state import BotState
 from bot.access import AccessControl
 from bot.scanner import Scanner
+from bot.menu import ADMIN_COMMANDS, USER_COMMANDS
 from car.car_finder import Yad2CarFinder
 from car.listing import CarListing
 from car.search_url import normalize_search_url
@@ -97,6 +98,23 @@ class AccessTests(unittest.TestCase):
 
 
 class AccessCommandTests(unittest.IsolatedAsyncioTestCase):
+    async def test_menu_lists_admin_commands_only_for_admins(self):
+        self.assertIn("help", [command.command for command in USER_COMMANDS])
+        self.assertNotIn("promote", [command.command for command in USER_COMMANDS])
+        self.assertIn("promote", [command.command for command in ADMIN_COMMANDS])
+
+        with tempfile.TemporaryDirectory() as directory:
+            access = AccessControl(Scanner(BotState(str(Path(directory) / "bot.sqlite3"))))
+            access.configured_admins = {123}
+            message = SimpleNamespace(reply_text=AsyncMock())
+            update = SimpleNamespace(effective_user=SimpleNamespace(id=123), message=message, callback_query=None)
+            await access.help_command(update, SimpleNamespace())
+            self.assertIn("/promote", message.reply_text.await_args.args[0])
+            update.effective_user.id = 456
+            await access.help_command(update, SimpleNamespace())
+            self.assertNotIn("/promote", message.reply_text.await_args.args[0])
+            self.assertIn("/request", message.reply_text.await_args.args[0])
+
     async def test_requests_command_reports_when_none_pending(self):
         with tempfile.TemporaryDirectory() as directory:
             access = AccessControl(Scanner(BotState(str(Path(directory) / "bot.sqlite3"))))

@@ -13,6 +13,7 @@ def build_start_keyboard() -> InlineKeyboardMarkup:
         [
             [InlineKeyboardButton("🔗 Use a Yad2 search link", callback_data="use_search_link")],
             [InlineKeyboardButton("🔍 Choose filters here", callback_data="new_search")],
+            [InlineKeyboardButton("📋 Commands", callback_data="show_commands")],
         ]
     )
 

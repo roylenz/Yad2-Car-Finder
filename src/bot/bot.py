@@ -13,6 +13,7 @@ from telegram.ext import (
 from telegram import Update
 
 from bot.access import AccessControl
+from bot.menu import configure_menu
 from bot.handlers import (
     CONFIRMING,
     SELECTING_INTERVAL,
@@ -39,6 +40,7 @@ from bot.scanner import schedule_scan
 
 
 async def restore_searches(app: Application) -> None:
+    await configure_menu(app.bot, app.bot_data["access"].admin_ids())
     for chat_id, url, interval in scanner.state.active_searches():
         if scanner.access_check(chat_id):
             schedule_scan(app.job_queue, scanner, chat_id, url, interval, first=5)
@@ -61,6 +63,7 @@ def create_bot() -> Application:
     url_handler = MessageHandler(filters.TEXT & filters.Regex(r"^https?://"), url_search_message)
     access = AccessControl(scanner)
     scanner.access_check = access.is_allowed
+    app.bot_data["access"] = access
 
     search_conversation = ConversationHandler(
         entry_points=[
@@ -99,7 +102,9 @@ def create_bot() -> Application:
 
     app.add_handler(TypeHandler(Update, access.guard), group=-1)
     app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("help", access.help_command))
     app.add_handler(search_conversation)
+    app.add_handler(CallbackQueryHandler(access.help_command, pattern="^show_commands$"))
     app.add_handler(CallbackQueryHandler(search_link_prompt, pattern="^use_search_link$"))
     app.add_handler(CallbackQueryHandler(access.request_callback, pattern=r"^access_(approve|deny):[0-9]+$"))
     app.add_handler(url_handler)
