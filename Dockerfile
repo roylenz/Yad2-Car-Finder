@@ -15,6 +15,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY src ./src
+RUN mkdir -p /app/logs && chown -R bot:bot /app
 
 USER bot
 CMD ["python", "src/main.py"]
