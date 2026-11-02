@@ -23,6 +23,9 @@ docker compose up -d --build
 docker compose logs -f bot
 ```
 
+If your account cannot access the Docker socket, prefix the `docker compose`
+commands with `sudo`.
+
 The image includes Chromium and runs it headlessly as a non-root user. It works
 on ARM64 Raspberry Pi OS and x86-64 Linux. The bot uses Telegram polling, so no
 ports need to be published. Only run one instance for a given token. The current
