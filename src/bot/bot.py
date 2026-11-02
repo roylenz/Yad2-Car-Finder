@@ -41,10 +41,15 @@ from bot.scanner import schedule_scan
 
 async def restore_searches(app: Application) -> None:
     await configure_menu(app.bot, app.bot_data["access"].admin_ids())
+    scanner.start_workers()
     for chat_id, url, interval in scanner.state.active_searches():
         if scanner.access_check(chat_id):
             schedule_scan(app.job_queue, scanner, chat_id, url, interval, first=5)
     logger.info("Restored saved searches", count=len(scanner.state.active_searches()))
+
+
+async def stop_scan_workers(app: Application) -> None:
+    await scanner.stop_workers()
 
 
 def create_bot() -> Application:
@@ -54,7 +59,13 @@ def create_bot() -> Application:
         raise
 
     try:
-        app = Application.builder().token(Configuration.Bot.TOKEN).post_init(restore_searches).build()
+        app = (
+            Application.builder()
+            .token(Configuration.Bot.TOKEN)
+            .post_init(restore_searches)
+            .post_shutdown(stop_scan_workers)
+            .build()
+        )
     except Exception as e:
         raise CustomException(
             f"Failed to create bot application: {e}", ErrorCode.BOT_START_FAILED

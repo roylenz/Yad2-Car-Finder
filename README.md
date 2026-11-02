@@ -7,6 +7,7 @@ Telegram bot that scrapes [Yad2](https://www.yad2.co.il/vehicles/cars) for car l
 - **Search URL alerts** - send a filtered Yad2 car search URL directly to the bot; it checks every 10 minutes
 - **New car and price drop alerts** - messages include the listing price, mileage, and link
 - **Persistent tracking** - searches and last seen prices survive container restarts
+- **Bounded concurrent scans** - a shared queue runs at most `MAX_CONCURRENT_SCANS` browser scans at once (default 2)
 - **Private access** - users request access with their name; admins approve requests and can promote other admins
 - **Structured logging** - colored console output with structured JSON kwargs, configurable log level via `LOG_LEVEL` env var
 - **Bot commands** - `/start`, `/search`, `/stop`, `/status`
@@ -38,6 +39,11 @@ The image includes Chromium and runs it on a virtual X display as a non-root use
 on ARM64 Raspberry Pi OS and x86-64 Linux. The bot uses Telegram polling, so no
 ports need to be published. Only run one instance for a given token. Docker Compose
 stores active searches and listing prices in the `bot_data` volume.
+Each private chat has its own saved search and listing history. Alerts are sent
+only to the chat that created the search. When several scans become due together,
+they wait in a FIFO queue; repeated triggers for the same search do not pile up.
+Set `MAX_CONCURRENT_SCANS` in `.env` to adjust the number of browser scans allowed
+at once. `/status` shows whether your search is queued, running, or waiting.
 
 To update, pull the latest changes and run `docker compose up -d --build` again.
 

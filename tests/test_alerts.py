@@ -1,3 +1,4 @@
+import asyncio
 import json
 import tempfile
 import unittest
@@ -139,6 +140,52 @@ class AccessCommandTests(unittest.IsolatedAsyncioTestCase):
             update = SimpleNamespace(effective_user=SimpleNamespace(id=123), message=message)
             await access.admin_command(update, SimpleNamespace(args=[]))
             message.reply_text.assert_awaited_once_with("No pending requests.")
+
+
+class ScanQueueTests(unittest.IsolatedAsyncioTestCase):
+    async def test_two_workers_queue_third_scan_and_keep_chat_ids(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = BotState(str(Path(directory) / "bot.sqlite3"))
+            for chat_id in (101, 102, 103):
+                state.set_search(chat_id, EXAMPLE_URL, 10)
+
+            started = asyncio.Event()
+            release = asyncio.Event()
+            running = 0
+            peak = 0
+            processed = []
+
+            class TestScanner(Scanner):
+                async def _run_scan(self, context, chat_id, url, one_time):
+                    nonlocal running, peak
+                    running += 1
+                    peak = max(peak, running)
+                    processed.append((chat_id, context.job.chat_id))
+                    if running == 2:
+                        started.set()
+                    await release.wait()
+                    running -= 1
+
+            scanner = TestScanner(state)
+            scanner.max_concurrent_scans = 2
+            scanner.start_workers()
+            try:
+                for chat_id in (101, 102, 103):
+                    context = SimpleNamespace(
+                        job=SimpleNamespace(chat_id=chat_id, data=EXAMPLE_URL), chat_data={}
+                    )
+                    await scanner.scan_job(context)
+                    if chat_id == 101:
+                        await scanner.scan_job(context)  # Duplicate trigger is not queued.
+                await asyncio.wait_for(started.wait(), 2)
+                self.assertEqual(peak, 2)
+                self.assertEqual(scanner._queue.qsize(), 1)
+                release.set()
+                await asyncio.wait_for(scanner._queue.join(), 2)
+                self.assertEqual(processed, [(101, 101), (102, 102), (103, 103)])
+            finally:
+                release.set()
+                await scanner.stop_workers()
 
 
 class FeedTests(unittest.IsolatedAsyncioTestCase):

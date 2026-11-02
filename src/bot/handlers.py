@@ -382,6 +382,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         f"🟢 Active\n"
         f"📊 {seen_count} unique cars found so far\n\n"
         f"⏱️ {interval_text}\n"
+        f"🔄 {scanner.queue_status(chat_id)}\n"
         f"🔗 {search_url}",
     )
 

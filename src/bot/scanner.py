@@ -1,6 +1,7 @@
 """Scheduled listing scans and Telegram change alerts."""
 
 import asyncio
+import os
 from typing import Callable
 
 from car.car_finder import Yad2CarFinder
@@ -78,6 +79,36 @@ class Scanner:
         self.state = state or BotState()
         self._scan_locks: dict[int, asyncio.Lock] = {}
         self.access_check: Callable[[int], bool] = lambda _chat_id: True
+        self.max_concurrent_scans = int(os.getenv("MAX_CONCURRENT_SCANS", "2"))
+        if self.max_concurrent_scans < 1:
+            raise ValueError("MAX_CONCURRENT_SCANS must be at least 1")
+        self._queue: asyncio.Queue[tuple[ContextTypes.DEFAULT_TYPE, int, str]] = asyncio.Queue()
+        self._pending: set[tuple[int, str]] = set()
+        self._running: set[tuple[int, str]] = set()
+        self._workers: list[asyncio.Task] = []
+
+    def start_workers(self) -> None:
+        if self._workers:
+            return
+        self._workers = [
+            asyncio.create_task(self._worker(), name=f"scan-worker-{index + 1}")
+            for index in range(self.max_concurrent_scans)
+        ]
+        logger.info("Scan workers started", max_concurrent_scans=self.max_concurrent_scans)
+
+    async def stop_workers(self) -> None:
+        for worker in self._workers:
+            worker.cancel()
+        if self._workers:
+            await asyncio.gather(*self._workers, return_exceptions=True)
+        self._workers.clear()
+
+    def queue_status(self, chat_id: int) -> str:
+        if any(key[0] == chat_id for key in self._running):
+            return "Scanning now"
+        if any(key[0] == chat_id for key in self._pending):
+            return f"Queued ({self._queue.qsize()} waiting)"
+        return "Waiting for next check"
 
     def _get_lock(self, chat_id: int) -> asyncio.Lock:
         if chat_id not in self._scan_locks:
@@ -94,20 +125,40 @@ class Scanner:
         if active is None or active[0] != url or not self.access_check(chat_id):
             return
 
-        lock = self._get_lock(chat_id)
-        if lock.locked():
-            logger.info("Scan already in progress, skipping", chat_id=chat_id)
+        key = (chat_id, url)
+        if key in self._pending:
+            logger.info("Scan already queued or running, skipping", chat_id=chat_id)
             return
 
-        async with lock:
+        self._pending.add(key)
+        self._queue.put_nowait((context, chat_id, url))
+        logger.info("Scan queued", chat_id=chat_id, queue_length=self._queue.qsize())
+
+    async def _worker(self) -> None:
+        while True:
+            context, chat_id, url = await self._queue.get()
+            key = (chat_id, url)
+            self._running.add(key)
             try:
-                await self._run_scan(context, chat_id, url, active[1] == 0)
+                active = self.state.get_search(chat_id)
+                if active is None or active[0] != url or not self.access_check(chat_id):
+                    continue
+                async with self._get_lock(chat_id):
+                    active = self.state.get_search(chat_id)
+                    if active is None or active[0] != url or not self.access_check(chat_id):
+                        continue
+                    try:
+                        await self._run_scan(context, chat_id, url, active[1] == 0)
+                    finally:
+                        if active[1] == 0 and self.state.get_search(chat_id) == active:
+                            self.state.stop_search(chat_id)
+                            context.chat_data["scan_active"] = False
             except Exception as error:
-                logger.error("scan_job failed", chat_id=chat_id, error=str(error))
+                logger.error("scan worker failed", chat_id=chat_id, error=str(error))
             finally:
-                if active[1] == 0 and self.state.get_search(chat_id) == active:
-                    self.state.stop_search(chat_id)
-                    context.chat_data["scan_active"] = False
+                self._running.discard(key)
+                self._pending.discard(key)
+                self._queue.task_done()
 
     async def _run_scan(
         self, context: ContextTypes.DEFAULT_TYPE, chat_id: int, url: str, one_time: bool
