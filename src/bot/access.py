@@ -71,11 +71,14 @@ class AccessControl:
             await self.request_command(update, context)
         elif update.message:
             await update.message.reply_text(
+                f"Your Telegram ID: {user.id}\n\n"
                 "This bot requires approval. Send /request followed by your name, "
                 "for example: /request Jane Smith. An admin will review it."
             )
         elif update.callback_query:
-            await update.callback_query.answer("Access requires approval. Send /request with your name.", show_alert=True)
+            await update.callback_query.answer(
+                f"Your Telegram ID: {user.id}. Send /request with your name.", show_alert=True
+            )
         raise ApplicationHandlerStop
 
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -100,6 +103,7 @@ class AccessControl:
                 ])
         else:
             lines = [
+                f"Your Telegram ID: {user_id}",
                 "/request Your Name — Request access",
                 "/id — Show your Telegram user ID",
             ]
@@ -113,11 +117,16 @@ class AccessControl:
     async def request_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         name = update.message.text.partition(" ")[2].strip()
         if not name or len(name) > 80 or "\n" in name or "\r" in name:
-            await update.message.reply_text("Send your name like this: /request Jane Smith")
+            await update.message.reply_text(
+                f"Your Telegram ID: {update.effective_user.id}\n"
+                "Send your name like this: /request Jane Smith"
+            )
             return
         user_id = update.effective_user.id
         self.scanner.state.request_access(user_id, name)
-        await update.message.reply_text("Your access request was sent to the admins.")
+        await update.message.reply_text(
+            f"Your Telegram ID: {user_id}\nYour access request was sent to the admins."
+        )
         await self._notify_admins(context, user_id, name)
 
     async def _notify_admins(self, context: ContextTypes.DEFAULT_TYPE, user_id: int, name: str) -> None:

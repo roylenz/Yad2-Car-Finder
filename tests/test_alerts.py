@@ -10,6 +10,7 @@ from bot.state import BotState
 from bot.access import AccessControl
 from bot.scanner import Scanner
 from bot.menu import ADMIN_COMMANDS, USER_COMMANDS
+from telegram.ext import ApplicationHandlerStop
 from car.car_finder import Yad2CarFinder
 from car.listing import CarListing
 from car.search_url import normalize_search_url
@@ -98,6 +99,21 @@ class AccessTests(unittest.TestCase):
 
 
 class AccessCommandTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unapproved_user_gets_id_in_reply(self):
+        with tempfile.TemporaryDirectory() as directory:
+            access = AccessControl(Scanner(BotState(str(Path(directory) / "bot.sqlite3"))))
+            access.configured_admins = {123}
+            message = SimpleNamespace(text="/start", reply_text=AsyncMock())
+            update = SimpleNamespace(
+                effective_user=SimpleNamespace(id=456),
+                effective_chat=SimpleNamespace(type="private"),
+                message=message,
+                callback_query=None,
+            )
+            with self.assertRaises(ApplicationHandlerStop):
+                await access.guard(update, SimpleNamespace())
+            self.assertIn("456", message.reply_text.await_args.args[0])
+
     async def test_menu_lists_admin_commands_only_for_admins(self):
         self.assertIn("help", [command.command for command in USER_COMMANDS])
         self.assertNotIn("promote", [command.command for command in USER_COMMANDS])
