@@ -64,7 +64,7 @@ class FeedTests(unittest.IsolatedAsyncioTestCase):
         class Tab:
             async def evaluate(self, _expression):
                 return json.dumps(
-                    [{"href": "item/abc?spot=standard", "title": "Test car", "price": "85,000 ₪"}]
+                    [{"href": "/item/abc?spot=standard", "title": "Test car", "price": "85,000 ₪"}]
                 )
 
         listings = {}

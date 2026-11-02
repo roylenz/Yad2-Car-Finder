@@ -110,8 +110,14 @@ class Yad2CarFinder:
             href = item.get("href")
             if not href or "spot=look_alike" in href:
                 continue
-            url = urljoin(Yad2CarFinder._BASE_CAR_SEARCH_URL, href).split("?", 1)[0]
-            if urlsplit(url).path.startswith("/vehicles/item/"):
+            if href.startswith(("/item/", "item/")):
+                url = urljoin("https://www.yad2.co.il/vehicles/", href.lstrip("/"))
+            else:
+                url = urljoin(Yad2CarFinder._BASE_CAR_SEARCH_URL, href)
+            url = url.split("?", 1)[0]
+            if urlsplit(url).hostname == "www.yad2.co.il" and urlsplit(url).path.startswith(
+                "/vehicles/item/"
+            ):
                 price_text = item.get("price") or ""
                 digits = re.sub(r"\D", "", price_text)
                 listings[url] = CarListing(
