@@ -1,3 +1,4 @@
+import os
 import time
 
 import nodriver as uc
@@ -11,7 +12,7 @@ class Yad2CarFinder:
         "--disable-gpu",
         "--window-size=1920,1080",
         "--mute-audio",
-    ]  # TODO: Add headless mode
+    ]
     _BASE_CAR_SEARCH_URL = "https://www.yad2.co.il/vehicles/cars"
     _BASE_URL = "https://www.yad2.co.il"
     _FETCHING_INTERVAL_IN_SECONDS = 1
@@ -30,7 +31,15 @@ class Yad2CarFinder:
     @staticmethod
     async def _start_browser(chrome_arguments: list[str]) -> uc.Browser:
         try:
-            return await uc.start(browser_args=chrome_arguments)
+            headless = os.getenv("CHROME_HEADLESS", "false").lower() in ("1", "true", "yes")
+            browser_path = os.getenv("CHROME_PATH") or None
+            if os.getenv("CHROME_NO_SANDBOX", "false").lower() in ("1", "true", "yes"):
+                chrome_arguments = [*chrome_arguments, "--no-sandbox"]
+            return await uc.start(
+                browser_args=chrome_arguments,
+                browser_executable_path=browser_path,
+                headless=headless,
+            )
         except Exception as e:
             raise CustomException(
                 f"Failed to start browser: {e}",

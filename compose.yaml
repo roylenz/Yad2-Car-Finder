@@ -1,0 +1,10 @@
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    environment:
+      CHROME_HEADLESS: "true"
+      CHROME_PATH: /usr/bin/chromium
+    shm_size: 256mb

@@ -4,3 +4,4 @@ chrome
 chromedriver
 logs
 .env
+.venv/

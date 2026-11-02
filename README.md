@@ -10,6 +10,29 @@ Telegram bot that scrapes [Yad2](https://www.yad2.co.il/vehicles/cars) for car l
 
 ## Setup
 
+### Docker Compose (recommended for Raspberry Pi)
+
+Install Docker and the Compose plugin, then create a private `.env` file from
+`.env.example` and set `TELEGRAM_BOT_TOKEN` to your BotFather token. Keep the
+token out of Git.
+
+```bash
+cp .env.example .env
+chmod 600 .env
+docker compose up -d --build
+docker compose logs -f bot
+```
+
+The image includes Chromium and runs it headlessly as a non-root user. It works
+on ARM64 Raspberry Pi OS and x86-64 Linux. The bot uses Telegram polling, so no
+ports need to be published. Only run one instance for a given token. The current
+bot keeps search configuration and seen listings in memory; restarting it resets
+active scans and their history.
+
+To update, pull the latest changes and run `docker compose up -d --build` again.
+
+### Direct Python installation
+
 ### Prerequisites
 
 - Python 3.12+
