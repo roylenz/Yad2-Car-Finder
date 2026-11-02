@@ -6,6 +6,7 @@ from dataclasses import replace
 from urllib.parse import urljoin, urlsplit
 
 import nodriver as uc
+from nodriver.core.connection import ProtocolException
 from car.listing import CarListing
 from car.search_url import BASE_URL
 from common.exceptions import CustomException, ErrorCode
@@ -55,7 +56,11 @@ class Yad2CarFinder:
     @staticmethod
     async def _query_elements(tab: uc.Tab, css_selector: str) -> list:
         """Run a CSS selector query via CDP and return matching elements."""
-        return await tab.query_selector_all(css_selector)
+        try:
+            return await tab.query_selector_all(css_selector)
+        except ProtocolException:
+            # The document can be replaced while the search page is loading.
+            return []
 
     @staticmethod
     async def _poll_for_elements(
@@ -81,7 +86,13 @@ class Yad2CarFinder:
                 raise CustomException("Yad2 requested browser validation", ErrorCode.CAPTCHA_TIMEOUT)
             if await Yad2CarFinder._query_elements(tab, Yad2CarFinder._PAGE_LOADED_SELECTOR):
                 return True
-            if await tab.evaluate("document.body?.innerText.includes(\"מה שחיפשת לא נמצא\")"):
+            try:
+                no_results = await tab.evaluate(
+                    "document.body?.innerText.includes(\"מה שחיפשת לא נמצא\")"
+                )
+            except ProtocolException:
+                no_results = False
+            if no_results:
                 return False
             await tab.sleep(poll_interval)
 
