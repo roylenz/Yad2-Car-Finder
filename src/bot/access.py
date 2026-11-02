@@ -127,12 +127,15 @@ class AccessControl:
         command = update.message.text.split()[0].split("@")[0]
         if command == "/requests":
             pending = self.scanner.state.pending_requests()
-            await update.message.reply_text(
-                "Pending requests:\n" + "\n".join(
+            text = (
+                "Pending requests:\n"
+                + "\n".join(
                     f"{name} — {user_id} (approve: /allow {user_id})"
                     for user_id, name in pending
-                ) if pending else "No pending requests."
+                )
+                if pending else "No pending requests."
             )
+            await update.message.reply_text(text)
             return
         if command == "/whitelist":
             overrides = self.scanner.state.access_overrides()

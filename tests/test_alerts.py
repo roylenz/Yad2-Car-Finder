@@ -2,6 +2,8 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 from bot.scanner import detect_changes, format_listing
 from bot.state import BotState
@@ -92,6 +94,17 @@ class AccessTests(unittest.TestCase):
             state.set_admin(456, False)
             state.set_access(456, False)
             self.assertFalse(access.is_allowed(456))
+
+
+class AccessCommandTests(unittest.IsolatedAsyncioTestCase):
+    async def test_requests_command_reports_when_none_pending(self):
+        with tempfile.TemporaryDirectory() as directory:
+            access = AccessControl(Scanner(BotState(str(Path(directory) / "bot.sqlite3"))))
+            access.configured_admins = {123}
+            message = SimpleNamespace(text="/requests", reply_text=AsyncMock())
+            update = SimpleNamespace(effective_user=SimpleNamespace(id=123), message=message)
+            await access.admin_command(update, SimpleNamespace(args=[]))
+            message.reply_text.assert_awaited_once_with("No pending requests.")
 
 
 class FeedTests(unittest.IsolatedAsyncioTestCase):
