@@ -33,12 +33,14 @@ class Yad2CarFinder:
         try:
             headless = os.getenv("CHROME_HEADLESS", "false").lower() in ("1", "true", "yes")
             browser_path = os.getenv("CHROME_PATH") or None
-            if os.getenv("CHROME_NO_SANDBOX", "false").lower() in ("1", "true", "yes"):
-                chrome_arguments = [*chrome_arguments, "--no-sandbox"]
+            no_sandbox = os.getenv("CHROME_NO_SANDBOX", "false").lower() in (
+                "1", "true", "yes"
+            )
             return await uc.start(
                 browser_args=chrome_arguments,
                 browser_executable_path=browser_path,
                 headless=headless,
+                sandbox=not no_sandbox,
             )
         except Exception as e:
             raise CustomException(
