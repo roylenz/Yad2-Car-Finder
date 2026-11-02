@@ -8,3 +8,8 @@ services:
       CHROME_HEADLESS: "false"
       CHROME_PATH: /usr/bin/chromium
     shm_size: 256mb
+    volumes:
+      - bot_data:/app/data
+
+volumes:
+  bot_data:

@@ -4,7 +4,9 @@ Telegram bot that scrapes [Yad2](https://www.yad2.co.il/vehicles/cars) for car l
 ## Features
 - **Interactive configuration** - configure manufacturer, model, year range via inline keyboard buttons in Telegram
 - **Periodic scanning** - automatically checks for new listings every X minutes (configurable: 5/10/15/30/60) or run a one-time scan
-- **Smart notifications** - first scan sends all found listings, subsequent scans only notify about new ones
+- **Search URL alerts** - send a filtered Yad2 car search URL directly to the bot; it checks every 10 minutes
+- **New car and price drop alerts** - messages include the listing price, mileage, and link
+- **Persistent tracking** - searches and last seen prices survive container restarts
 - **Structured logging** - colored console output with structured JSON kwargs, configurable log level via `LOG_LEVEL` env var
 - **Bot commands** - `/start`, `/search`, `/stop`, `/status`
 
@@ -30,9 +32,8 @@ commands with `sudo`.
 
 The image includes Chromium and runs it on a virtual X display as a non-root user. It works
 on ARM64 Raspberry Pi OS and x86-64 Linux. The bot uses Telegram polling, so no
-ports need to be published. Only run one instance for a given token. The current
-bot keeps search configuration and seen listings in memory; restarting it resets
-active scans and their history.
+ports need to be published. Only run one instance for a given token. Docker Compose
+stores active searches and listing prices in the `bot_data` volume.
 
 To update, pull the latest changes and run `docker compose up -d --build` again.
 
@@ -65,6 +66,17 @@ python3 src/main.py
 ```
 
 Then open your bot in Telegram and send `/start`
+
+You can also send a filtered Yad2 car search URL directly, for example:
+
+```text
+https://www.yad2.co.il/vehicles/cars?manufacturer=334&model=13190&year=2023--1&price=-1-90000&km=-1-50000
+```
+
+The bot uses the URL's filters as sent, starts a scan, and checks again every 10
+minutes. `/status` shows the active URL; `/stop` stops its alerts. A new URL
+replaces the previous search for that chat. If Yad2 does not list a price or
+mileage for a car, the alert says "Not listed" for that field.
 
 ## Usage
 

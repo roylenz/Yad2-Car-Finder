@@ -2,6 +2,7 @@ from typing import NamedTuple
 
 from car.catalog import MANUFACTURERS, MANUFACTURER_BY_ID, model_name, models_for
 from car.car_search_filter import CarSearchFilter
+from car.search_url import normalize_search_url, search_url_for_filter
 from common.logger import logger
 from common.range import Range
 from telegram import Update
@@ -17,7 +18,7 @@ from bot.keyboards import (
     build_year_max_keyboard,
     build_year_min_keyboard,
 )
-from bot.scanner import Scanner
+from bot.scanner import Scanner, schedule_scan
 
 (
     SELECTING_MANUFACTURER,
@@ -67,8 +68,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     logger.debug("/start command received", **_user_context(update))
     await update.message.reply_text(
         "🚗 *Yad2 Car Finder Bot*\n\n"
-        "I'll help you find cars on Yad2 and notify you when new listings appear.\n\n"
-        "Tap the button below to configure your search:",
+        "I'll alert you about new cars and price drops, with prices and mileage.\n\n"
+        "Send me a Yad2 car search URL, or use the button to set filters:",
         parse_mode="Markdown",
         reply_markup=build_start_keyboard(),
     )
@@ -77,12 +78,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def search_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Entry point for search configuration (from /search command or inline button)."""
     chat_id = update.effective_chat.id
-    was_active = context.chat_data.get("scan_active", False)
+    was_active = scanner.state.get_search(chat_id) is not None
     logger.debug("/search entry", **_user_context(update), previous_scan_active=was_active)
 
     if was_active:
         _remove_scan_jobs(context, chat_id)
-        scanner.clear_seen_urls(chat_id)
+        scanner.state.stop_search(chat_id)
         context.chat_data["scan_active"] = False
         logger.debug("Previous scan stopped for new search", **_user_context(update))
     else:
@@ -299,25 +300,9 @@ async def confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             filters=car_filter.get_url_parameters(),
         )
 
-        _remove_scan_jobs(context, chat_id)
-
-        context.job_queue.run_once(
-            scanner.scan_job,
-            when=2,
-            chat_id=chat_id,
-            name=f"{JOB_NAME_PREFIX}{chat_id}_once",
-            data=car_filter,
-        )
-
-        if interval > 0:
-            context.job_queue.run_repeating(
-                scanner.scan_job,
-                interval=interval * 60,
-                first=interval * 60,
-                chat_id=chat_id,
-                name=f"{JOB_NAME_PREFIX}{chat_id}",
-                data=car_filter,
-            )
+        search_url = search_url_for_filter(car_filter)
+        scanner.state.set_search(chat_id, search_url, interval)
+        schedule_scan(context.job_queue, scanner, chat_id, search_url, interval)
 
         context.chat_data["active_filter"] = car_filter
         context.chat_data["scan_active"] = True
@@ -343,7 +328,7 @@ async def confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     chat_id = update.effective_chat.id
-    is_active = context.chat_data.get("scan_active", False)
+    is_active = scanner.state.get_search(chat_id) is not None
     logger.debug("/stop command received", **_user_context(update), was_active=is_active)
 
     if not is_active:
@@ -355,8 +340,8 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
     _remove_scan_jobs(context, chat_id)
     context.chat_data["scan_active"] = False
-    scanner.clear_seen_urls(chat_id)
-    logger.debug("Scan stopped and seen URLs cleared", **_user_context(update))
+    scanner.state.stop_search(chat_id)
+    logger.debug("Scan stopped and listing state cleared", **_user_context(update))
 
     await update.message.reply_text(
         "⏹️ Scanning stopped. Use /search to configure a new search.",
@@ -367,7 +352,8 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
-    is_active = context.chat_data.get("scan_active", False)
+    active = scanner.state.get_search(chat_id)
+    is_active = active is not None
     logger.debug("/status command received", **_user_context(update), scan_active=is_active)
 
     if not is_active:
@@ -377,17 +363,41 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
-    summary = _build_filter_summary(context.chat_data)
+    search_url, interval = active
     seen_count = scanner.get_seen_count(chat_id)
     logger.debug("Status check", **_user_context(update), seen_count=seen_count)
 
+    interval_text = f"Every {interval} minutes" if interval else "One-time scan"
     await update.message.reply_text(
-        f"*Current Scan Status:*\n\n"
+        f"Current Scan Status:\n\n"
         f"🟢 Active\n"
         f"📊 {seen_count} unique cars found so far\n\n"
-        f"{summary}",
-        parse_mode="Markdown",
+        f"⏱️ {interval_text}\n"
+        f"🔗 {search_url}",
     )
+
+
+async def url_search_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Start alerts from a Yad2 search link sent as a Telegram message."""
+    try:
+        search_url = normalize_search_url(update.message.text)
+    except ValueError as error:
+        await update.message.reply_text(str(error))
+        return ConversationHandler.END
+
+    chat_id = update.effective_chat.id
+    interval = 10
+    scanner.state.set_search(chat_id, search_url, interval)
+    schedule_scan(context.job_queue, scanner, chat_id, search_url, interval)
+    context.chat_data["scan_active"] = True
+    context.chat_data["search_url"] = search_url
+    logger.info("URL search started", chat_id=chat_id, search_url=search_url)
+    await update.message.reply_text(
+        "✅ Tracking this Yad2 search every 10 minutes. The first scan starts now. "
+        "I'll alert you about new cars and price drops with price and mileage. "
+        "Use /status to check it or /stop to stop."
+    )
+    return ConversationHandler.END
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:

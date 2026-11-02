@@ -1,8 +1,13 @@
+import json
 import os
+import re
 import time
+from dataclasses import replace
+from urllib.parse import urljoin, urlsplit
 
 import nodriver as uc
-from car.car_search_filter import CarSearchFilter
+from car.listing import CarListing
+from car.search_url import BASE_URL
 from common.exceptions import CustomException, ErrorCode
 from common.logger import logger
 
@@ -13,8 +18,7 @@ class Yad2CarFinder:
         "--window-size=1920,1080",
         "--mute-audio",
     ]
-    _BASE_CAR_SEARCH_URL = "https://www.yad2.co.il/vehicles/cars"
-    _BASE_URL = "https://www.yad2.co.il"
+    _BASE_CAR_SEARCH_URL = BASE_URL
     _FETCHING_INTERVAL_IN_SECONDS = 1
     _PAGE_LOAD_TIMEOUT_IN_SECONDS = 15
     _CAPTCHA_TIMEOUT_IN_SECONDS = 120
@@ -49,14 +53,6 @@ class Yad2CarFinder:
             ) from e
 
     @staticmethod
-    def _get_car_search_url(base_car_search_url: str, car_search_filter: CarSearchFilter) -> str:
-        car_search_url = base_car_search_url
-        car_search_url_parameters = car_search_filter.get_url_parameters()
-        if len(car_search_url_parameters) > 0:
-            car_search_url += f'?{"&".join(car_search_url_parameters)}'
-        return car_search_url
-
-    @staticmethod
     async def _query_elements(tab: uc.Tab, css_selector: str) -> list:
         """Run a CSS selector query via CDP and return matching elements."""
         return await tab.query_selector_all(css_selector)
@@ -77,28 +73,20 @@ class Yad2CarFinder:
     @staticmethod
     async def _wait_for_page_load(
         tab: uc.Tab, timeout: int, captcha_timeout: int, poll_interval: float = 1
-    ) -> None:
-        """Wait for page content to appear, with a fallback for manual captcha solving."""
-        elements = await Yad2CarFinder._poll_for_elements(
-            tab, Yad2CarFinder._PAGE_LOADED_SELECTOR, timeout, poll_interval
-        )
-        if elements:
-            return
-
-        logger.warning(
-            "Feed items not found, possible CAPTCHA",
-            timeout=timeout,
-            captcha_timeout=captcha_timeout,
-        )
-        elements = await Yad2CarFinder._poll_for_elements(
-            tab, Yad2CarFinder._PAGE_LOADED_SELECTOR, captcha_timeout, poll_interval
-        )
-        if elements:
-            logger.info("Feed items appeared after captcha was solved")
-            return
+    ) -> bool:
+        """Return whether results loaded; an empty search is a valid scan result."""
+        deadline = time.monotonic() + timeout + captcha_timeout
+        while time.monotonic() < deadline:
+            if urlsplit(tab.url).hostname != "www.yad2.co.il":
+                raise CustomException("Yad2 requested browser validation", ErrorCode.CAPTCHA_TIMEOUT)
+            if await Yad2CarFinder._query_elements(tab, Yad2CarFinder._PAGE_LOADED_SELECTOR):
+                return True
+            if await tab.evaluate("document.body?.innerText.includes(\"מה שחיפשת לא נמצא\")"):
+                return False
+            await tab.sleep(poll_interval)
 
         raise CustomException(
-            f"Feed items not found after {captcha_timeout}s captcha timeout",
+            "Yad2 results did not load before timeout",
             ErrorCode.CAPTCHA_TIMEOUT,
         )
 
@@ -110,27 +98,58 @@ class Yad2CarFinder:
             await tab.sleep(0.5)
 
     @staticmethod
-    async def _fetch_page_results(tab: uc.Tab, result_urls: set[str]) -> None:
-        feed_links = await Yad2CarFinder._query_elements(tab, Yad2CarFinder._RESULTS_FEED_SELECTOR)
-        for link_element in feed_links:
-            href = link_element.attrs.get("href")
-            if not href:
+    async def _fetch_page_results(tab: uc.Tab, listings: dict[str, CarListing]) -> None:
+        expression = """JSON.stringify(Array.from(document.querySelectorAll(
+            "a[data-nagish=private-item-link],a[data-nagish=agent-item-link],a[data-nagish=agent-item-no-footer-link]"
+        )).map(a => ({
+            href: a.getAttribute("href"),
+            title: a.querySelector("h2")?.innerText || a.querySelector("[data-testid=heading-line]")?.innerText,
+            price: a.querySelector("[data-testid=price]")?.innerText
+        })))"""
+        for item in json.loads(await tab.evaluate(expression)):
+            href = item.get("href")
+            if not href or "spot=look_alike" in href:
                 continue
-            if "spot=look_alike" in href:
-                continue
-            clean_href = href.split("?")[0]
-            if not clean_href.startswith("http"):
-                clean_href = Yad2CarFinder._BASE_URL + "/" + clean_href.lstrip("/")
-            result_urls.add(clean_href)
+            url = urljoin(Yad2CarFinder._BASE_CAR_SEARCH_URL, href).split("?", 1)[0]
+            if urlsplit(url).path.startswith("/vehicles/item/"):
+                price_text = item.get("price") or ""
+                digits = re.sub(r"\D", "", price_text)
+                listings[url] = CarListing(
+                    url=url,
+                    title=(item.get("title") or "Car listing").strip(),
+                    price=int(digits) if digits else None,
+                )
 
-    async def find(self, car_search_filter: CarSearchFilter) -> set[str]:
+    @staticmethod
+    async def _fetch_mileage(tab: uc.Tab, listing: CarListing) -> int | None:
+        try:
+            await tab.get(listing.url)
+            for _ in range(10):
+                expression = """Array.from(document.querySelectorAll("span"))
+                    .filter(x => x.children.length === 0 && x.textContent.trim() === "ק״מ")
+                    .map(x => x.parentElement.parentElement.querySelector("[data-testid=detail-card-value]")?.textContent)
+                    .find(Boolean) || null"""
+                value = await tab.evaluate(expression)
+                if value:
+                    digits = re.sub(r"\D", "", value)
+                    return int(digits) if digits else None
+                await tab.sleep(0.5)
+            title = await tab.evaluate("document.title")
+            match = re.search(r"([\d,]+)\s*ק[״\"]מ", title or "")
+            if match:
+                return int(match.group(1).replace(",", ""))
+        except Exception as error:
+            logger.warning("Could not read listing mileage", url=listing.url, error=str(error))
+        return None
+
+    async def find(
+        self, search_url: str, previous_prices: dict[str, int | None] | None = None
+    ) -> list[CarListing]:
         browser = await Yad2CarFinder._start_browser(Yad2CarFinder._CHROME_ARGUMENTS)
         try:
             logger.info("Browser started")
 
-            car_search_url = Yad2CarFinder._get_car_search_url(
-                Yad2CarFinder._BASE_CAR_SEARCH_URL, car_search_filter
-            )
+            car_search_url = search_url
 
             logger.info("Loading page", url=car_search_url)
             tab = await browser.get(car_search_url)
@@ -149,12 +168,14 @@ class Yad2CarFinder:
             except Exception:
                 pass
 
-            await Yad2CarFinder._wait_for_page_load(
+            has_results = await Yad2CarFinder._wait_for_page_load(
                 tab,
                 Yad2CarFinder._PAGE_LOAD_TIMEOUT_IN_SECONDS,
                 Yad2CarFinder._CAPTCHA_TIMEOUT_IN_SECONDS,
                 Yad2CarFinder._POLL_INTERVAL_IN_SECONDS,
             )
+            if not has_results:
+                return []
 
             logger.info("Scrolling to load results feed")
             await Yad2CarFinder._scroll_to_results_feed(tab)
@@ -178,7 +199,7 @@ class Yad2CarFinder:
             except (ValueError, Exception):
                 logger.info("No pagination found, assuming single page")
 
-            result_urls: set[str] = set()
+            listings: dict[str, CarListing] = {}
 
             for page_number in range(1, max_pages + 1):
                 if page_number > 1:
@@ -189,26 +210,40 @@ class Yad2CarFinder:
                     await tab.get(page_url)
                     await tab.sleep(Yad2CarFinder._FETCHING_INTERVAL_IN_SECONDS)
 
-                    await Yad2CarFinder._wait_for_page_load(
+                    has_results = await Yad2CarFinder._wait_for_page_load(
                         tab,
                         Yad2CarFinder._PAGE_LOAD_TIMEOUT_IN_SECONDS,
                         Yad2CarFinder._CAPTCHA_TIMEOUT_IN_SECONDS,
                         Yad2CarFinder._POLL_INTERVAL_IN_SECONDS,
                     )
+                    if not has_results:
+                        break
 
                     await Yad2CarFinder._scroll_to_results_feed(tab)
                     await Yad2CarFinder._poll_for_elements(
                         tab, Yad2CarFinder._RESULTS_FEED_SELECTOR, timeout=10
                     )
 
-                await Yad2CarFinder._fetch_page_results(tab, result_urls)
+                await Yad2CarFinder._fetch_page_results(tab, listings)
                 logger.info(
                     "Page scraped",
                     page=f"{page_number}/{max_pages}",
-                    total_results=len(result_urls),
+                    total_results=len(listings),
                 )
 
-            logger.info("Scraping complete", results_collected=len(result_urls))
-            return result_urls
+            previous_prices = previous_prices or {}
+            for url, listing in list(listings.items()):
+                previous_price = previous_prices.get(url)
+                if url not in previous_prices or (
+                    listing.price is not None
+                    and previous_price is not None
+                    and listing.price < previous_price
+                ):
+                    listings[url] = replace(
+                        listing, km=await Yad2CarFinder._fetch_mileage(tab, listing)
+                    )
+
+            logger.info("Scraping complete", results_collected=len(listings))
+            return list(listings.values())
         finally:
             browser.stop()
