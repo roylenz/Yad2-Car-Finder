@@ -51,7 +51,9 @@ class AccessControl:
             )
         command = ""
         if update.message and update.message.text:
-            command = update.message.text.split()[0].split("@")[0]
+            words = update.message.text.split()
+            if words:
+                command = words[0].split("@")[0]
         if command == "/id":
             await update.message.reply_text(f"Your Telegram user ID: {user.id}")
             raise ApplicationHandlerStop
@@ -142,10 +144,11 @@ class AccessControl:
                 "Allowed users: " + (", ".join(map(str, sorted(allowed))) or "none")
             )
             return
-        if len(context.args) != 1 or not context.args[0].isdecimal() or int(context.args[0]) <= 0:
+        args = context.args or []
+        if len(args) != 1 or not args[0].isdecimal() or int(args[0]) <= 0:
             await update.message.reply_text(f"Usage: {command} <Telegram user ID>")
             return
-        user_id = int(context.args[0])
+        user_id = int(args[0])
         if command == "/promote":
             if not self.is_allowed(user_id):
                 await update.message.reply_text("Approve this user before promoting them.")
