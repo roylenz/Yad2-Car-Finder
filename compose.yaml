@@ -5,6 +5,6 @@ services:
     init: true
     env_file: .env
     environment:
-      CHROME_HEADLESS: "true"
+      CHROME_HEADLESS: "false"
       CHROME_PATH: /usr/bin/chromium
     shm_size: 256mb
