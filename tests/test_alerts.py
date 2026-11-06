@@ -42,7 +42,7 @@ class AlertTests(unittest.TestCase):
             path = str(Path(directory) / "bot.sqlite3")
             state = BotState(path)
             state.set_search(123, EXAMPLE_URL, 10)
-            old = CarListing("https://www.yad2.co.il/vehicles/item/abc", "Test car", 90000, 45000)
+            old = CarListing("https://www.yad2.co.il/vehicles/item/abc", "Test car", 90000, 45000, 2)
             state.save_listings(123, [old])
 
             reloaded = BotState(path)
@@ -55,6 +55,8 @@ class AlertTests(unittest.TestCase):
             self.assertEqual(len(new), 1)
             self.assertEqual(drops[0][1], 90000)
             self.assertIn("45,000 km", format_listing(*drops[0]))
+            self.assertIn("Hand: 2", format_listing(*drops[0]))
+            self.assertIn("Hand: Not listed", format_listing(new[0]))
             self.assertIn("₪90,000 → ₪85,000", format_listing(*drops[0]))
 
     def test_new_search_clears_previous_listing_prices(self):
@@ -193,13 +195,18 @@ class FeedTests(unittest.IsolatedAsyncioTestCase):
         class Tab:
             async def evaluate(self, _expression):
                 return json.dumps(
-                    [{"href": "/item/abc?spot=standard", "title": "Test car", "price": "85,000 ₪"}]
+                    [{
+                        "href": "/item/abc?spot=standard",
+                        "title": "Test car",
+                        "price": "85,000 ₪",
+                        "text": "Test car\n2021 • יד 2\n85,000 ₪",
+                    }]
                 )
 
         listings = {}
         await Yad2CarFinder._fetch_page_results(Tab(), listings)
         listing = listings["https://www.yad2.co.il/vehicles/item/abc"]
-        self.assertEqual((listing.title, listing.price), ("Test car", 85000))
+        self.assertEqual((listing.title, listing.price, listing.hand), ("Test car", 85000, 2))
 
 
 if __name__ == "__main__":

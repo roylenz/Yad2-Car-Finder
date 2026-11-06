@@ -5,7 +5,7 @@ Telegram bot that scrapes [Yad2](https://www.yad2.co.il/vehicles/cars) for car l
 - **Interactive configuration** - configure manufacturer, model, year range via inline keyboard buttons in Telegram
 - **Periodic scanning** - automatically checks for new listings every X minutes (configurable: 5/10/15/30/60) or run a one-time scan
 - **Search URL alerts** - send a filtered Yad2 car search URL directly to the bot; it checks every 10 minutes
-- **New car and price drop alerts** - messages include the listing price, mileage, and link
+- **New car and price drop alerts** - messages include the listing price, mileage, hand (number of previous owners), and link
 - **Persistent tracking** - searches and last seen prices survive container restarts
 - **Bounded concurrent scans** - a shared queue runs at most `MAX_CONCURRENT_SCANS` browser scans at once (default 2)
 - **Private access** - users request access with their name; admins approve requests and can promote other admins
@@ -46,6 +46,7 @@ Set `MAX_CONCURRENT_SCANS` in `.env` to adjust the number of browser scans allow
 at once. `/status` shows whether your search is queued, running, or waiting.
 
 To update, pull the latest changes and run `docker compose up -d --build` again.
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full Raspberry Pi deployment steps.
 
 ### Direct Python installation
 
@@ -96,8 +97,8 @@ https://www.yad2.co.il/vehicles/cars?manufacturer=334&model=13190&year=2023--1&p
 
 The bot uses the URL's filters as sent, starts a scan, and checks again every 10
 minutes. `/status` shows the active URL; `/stop` stops its alerts. A new URL
-replaces the previous search for that chat. If Yad2 does not list a price or
-mileage for a car, the alert says "Not listed" for that field.
+replaces the previous search for that chat. If Yad2 does not list a price,
+mileage, or hand for a car, the alert says "Not listed" for that field.
 
 ## Usage
 

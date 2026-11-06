@@ -70,3 +70,6 @@ src/
 - Ad popup may appear in iframe with title "Modal Message" and close button class `bz-close-btn`
 - Captcha may appear; code should detect timeout and wait for manual solve
 - Keep a small delay between page loads (1s) to avoid rate limiting
+
+## Deployment
+- See `docs/DEPLOYMENT.md` (Raspberry Pi via SSH host `pi`, Docker Compose)

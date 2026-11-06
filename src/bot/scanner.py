@@ -1,6 +1,7 @@
 """Scheduled listing scans and Telegram change alerts."""
 
 import asyncio
+from dataclasses import replace
 import os
 from typing import Callable
 
@@ -34,8 +35,11 @@ def detect_changes(
         if old is None:
             new.append(listing)
         elif old.price is not None and listing.price is not None and listing.price < old.price:
-            if listing.km is None:
-                listing = CarListing(listing.url, listing.title, listing.price, old.km)
+            listing = replace(
+                listing,
+                km=listing.km if listing.km is not None else old.km,
+                hand=listing.hand if listing.hand is not None else old.hand,
+            )
             drops.append((listing, old.price))
     return new, drops
 
@@ -46,7 +50,10 @@ def format_listing(listing: CarListing, previous_price: int | None = None) -> st
     if previous_price is not None and listing.price is not None:
         price = f"₪{previous_price:,} → {price} (down ₪{previous_price - listing.price:,})"
     mileage = f"{listing.km:,} km" if listing.km is not None else "Not listed"
-    return f"{heading}: {listing.title}\nPrice: {price}\nMileage: {mileage}\n{listing.url}"
+    hand = str(listing.hand) if listing.hand is not None else "Not listed"
+    return (
+        f"{heading}: {listing.title}\nPrice: {price}\nMileage: {mileage}\nHand: {hand}\n{listing.url}"
+    )
 
 
 def schedule_scan(

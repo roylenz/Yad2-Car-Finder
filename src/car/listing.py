@@ -7,3 +7,4 @@ class CarListing:
     title: str
     price: int | None
     km: int | None = None
+    hand: int | None = None

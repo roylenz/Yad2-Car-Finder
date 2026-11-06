@@ -115,7 +115,8 @@ class Yad2CarFinder:
         )).map(a => ({
             href: a.getAttribute("href"),
             title: a.querySelector("h2")?.innerText || a.querySelector("[data-testid=heading-line]")?.innerText,
-            price: a.querySelector("[data-testid=price]")?.innerText
+            price: a.querySelector("[data-testid=price]")?.innerText,
+            text: a.innerText
         })))"""
         for item in json.loads(await tab.evaluate(expression)):
             href = item.get("href")
@@ -135,29 +136,44 @@ class Yad2CarFinder:
                     url=url,
                     title=(item.get("title") or "Car listing").strip(),
                     price=int(digits) if digits else None,
+                    hand=Yad2CarFinder._parse_hand(item.get("text")),
                 )
 
     @staticmethod
-    async def _fetch_mileage(tab: uc.Tab, listing: CarListing) -> int | None:
+    def _parse_hand(text: str | None) -> int | None:
+        match = re.search(r"(?<![\u0590-\u05FF])יד\s*(\d+)", text or "")
+        return int(match.group(1)) if match else None
+
+    @staticmethod
+    async def _fetch_details(tab: uc.Tab, listing: CarListing) -> CarListing:
+        """Read mileage and hand from the listing page, keeping known values as fallback."""
+        km, hand = listing.km, listing.hand
         try:
             await tab.get(listing.url)
+            expression = """(label => Array.from(document.querySelectorAll("span"))
+                .filter(x => x.children.length === 0 && x.textContent.trim() === label)
+                .map(x => x.parentElement.parentElement.querySelector("[data-testid=detail-card-value]")?.textContent)
+                .find(Boolean) || null)"""
             for _ in range(10):
-                expression = """Array.from(document.querySelectorAll("span"))
-                    .filter(x => x.children.length === 0 && x.textContent.trim() === "ק״מ")
-                    .map(x => x.parentElement.parentElement.querySelector("[data-testid=detail-card-value]")?.textContent)
-                    .find(Boolean) || null"""
-                value = await tab.evaluate(expression)
-                if value:
-                    digits = re.sub(r"\D", "", value)
-                    return int(digits) if digits else None
+                km_value = await tab.evaluate(f"{expression}('ק״מ')")
+                if km_value:
+                    digits = re.sub(r"\D", "", km_value)
+                    km = int(digits) if digits else km
+                    hand_value = await tab.evaluate(f"{expression}('יד')")
+                    if hand_value:
+                        digits = re.sub(r"\D", "", hand_value)
+                        hand = int(digits) if digits else hand
+                    break
                 await tab.sleep(0.5)
-            title = await tab.evaluate("document.title")
-            match = re.search(r"([\d,]+)\s*ק[״\"]מ", title or "")
-            if match:
-                return int(match.group(1).replace(",", ""))
+            else:
+                title = await tab.evaluate("document.title") or ""
+                match = re.search(r"([\d,]+)\s*ק[״\"]מ", title)
+                if match:
+                    km = int(match.group(1).replace(",", ""))
+                hand = Yad2CarFinder._parse_hand(title) or hand
         except Exception as error:
-            logger.warning("Could not read listing mileage", url=listing.url, error=str(error))
-        return None
+            logger.warning("Could not read listing details", url=listing.url, error=str(error))
+        return replace(listing, km=km, hand=hand)
 
     async def find(
         self, search_url: str, previous_prices: dict[str, int | None] | None = None
@@ -256,9 +272,7 @@ class Yad2CarFinder:
                     and previous_price is not None
                     and listing.price < previous_price
                 ):
-                    listings[url] = replace(
-                        listing, km=await Yad2CarFinder._fetch_mileage(tab, listing)
-                    )
+                    listings[url] = await Yad2CarFinder._fetch_details(tab, listing)
 
             logger.info("Scraping complete", results_collected=len(listings))
             return list(listings.values())
