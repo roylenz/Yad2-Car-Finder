@@ -25,8 +25,9 @@ class BotState:
                 "price INTEGER, km INTEGER, PRIMARY KEY (chat_id, url))"
             )
             columns = {row[1] for row in db.execute("PRAGMA table_info(listings)")}
-            if "hand" not in columns:
-                db.execute("ALTER TABLE listings ADD COLUMN hand INTEGER")
+            for column in ("hand", "year"):
+                if column not in columns:
+                    db.execute(f"ALTER TABLE listings ADD COLUMN {column} INTEGER")
             db.execute(
                 "CREATE TABLE IF NOT EXISTS access (user_id INTEGER PRIMARY KEY, allowed INTEGER NOT NULL)"
             )
@@ -78,20 +79,21 @@ class BotState:
     def previous_listings(self, chat_id: int) -> dict[str, CarListing]:
         with self._connect() as db:
             rows = db.execute(
-                "SELECT url, title, price, km, hand FROM listings WHERE chat_id=?", (chat_id,)
+                "SELECT url, title, price, km, hand, year FROM listings WHERE chat_id=?", (chat_id,)
             ).fetchall()
         return {row[0]: CarListing(*row) for row in rows}
 
     def save_listings(self, chat_id: int, listings: list[CarListing]) -> None:
         with self._connect() as db:
             db.executemany(
-                "INSERT INTO listings(chat_id,url,title,price,km,hand) VALUES (?,?,?,?,?,?) "
+                "INSERT INTO listings(chat_id,url,title,price,km,hand,year) VALUES (?,?,?,?,?,?,?) "
                 "ON CONFLICT(chat_id,url) DO UPDATE SET title=excluded.title, "
                 "price=COALESCE(excluded.price,listings.price), "
                 "km=COALESCE(excluded.km,listings.km), "
-                "hand=COALESCE(excluded.hand,listings.hand)",
+                "hand=COALESCE(excluded.hand,listings.hand), "
+                "year=COALESCE(excluded.year,listings.year)",
                 [
-                    (chat_id, item.url, item.title, item.price, item.km, item.hand)
+                    (chat_id, item.url, item.title, item.price, item.km, item.hand, item.year)
                     for item in listings
                 ],
             )

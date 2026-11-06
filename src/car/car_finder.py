@@ -1,3 +1,4 @@
+import datetime
 import json
 import os
 import re
@@ -137,6 +138,7 @@ class Yad2CarFinder:
                     title=(item.get("title") or "Car listing").strip(),
                     price=int(digits) if digits else None,
                     hand=Yad2CarFinder._parse_hand(item.get("text")),
+                    year=Yad2CarFinder._parse_year(item.get("text")),
                 )
 
     @staticmethod
@@ -145,9 +147,21 @@ class Yad2CarFinder:
         return int(match.group(1)) if match else None
 
     @staticmethod
+    def _parse_year(text: str | None) -> int | None:
+        """Find a model year, preferring the card line that also shows the hand."""
+        lines = (text or "").splitlines()
+        lines = [line for line in lines if Yad2CarFinder._parse_hand(line)] + lines
+        latest = datetime.date.today().year + 1
+        for line in lines:
+            for match in re.finditer(r"(?<![\d,.])(19[5-9]\d|20\d\d)(?![\d,.])", line):
+                if int(match.group(1)) <= latest:
+                    return int(match.group(1))
+        return None
+
+    @staticmethod
     async def _fetch_details(tab: uc.Tab, listing: CarListing) -> CarListing:
-        """Read mileage and hand from the listing page, keeping known values as fallback."""
-        km, hand = listing.km, listing.hand
+        """Read mileage, hand and year from the listing page, keeping known values as fallback."""
+        km, hand, year = listing.km, listing.hand, listing.year
         try:
             await tab.get(listing.url)
             expression = """(label => Array.from(document.querySelectorAll("span"))
@@ -163,6 +177,13 @@ class Yad2CarFinder:
                     if hand_value:
                         digits = re.sub(r"\D", "", hand_value)
                         hand = int(digits) if digits else hand
+                    if year is None:
+                        for label in ("שנה", "שנת יצור"):
+                            year = Yad2CarFinder._parse_year(
+                                await tab.evaluate(f"{expression}('{label}')")
+                            )
+                            if year:
+                                break
                     break
                 await tab.sleep(0.5)
             else:
@@ -171,9 +192,10 @@ class Yad2CarFinder:
                 if match:
                     km = int(match.group(1).replace(",", ""))
                 hand = Yad2CarFinder._parse_hand(title) or hand
+                year = year or Yad2CarFinder._parse_year(title)
         except Exception as error:
             logger.warning("Could not read listing details", url=listing.url, error=str(error))
-        return replace(listing, km=km, hand=hand)
+        return replace(listing, km=km, hand=hand, year=year)
 
     async def find(
         self, search_url: str, previous_prices: dict[str, int | None] | None = None

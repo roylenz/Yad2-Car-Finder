@@ -8,3 +8,4 @@ class CarListing:
     price: int | None
     km: int | None = None
     hand: int | None = None
+    year: int | None = None

@@ -39,6 +39,7 @@ def detect_changes(
                 listing,
                 km=listing.km if listing.km is not None else old.km,
                 hand=listing.hand if listing.hand is not None else old.hand,
+                year=listing.year if listing.year is not None else old.year,
             )
             drops.append((listing, old.price))
     return new, drops
@@ -51,8 +52,10 @@ def format_listing(listing: CarListing, previous_price: int | None = None) -> st
         price = f"₪{previous_price:,} → {price} (down ₪{previous_price - listing.price:,})"
     mileage = f"{listing.km:,} km" if listing.km is not None else "Not listed"
     hand = str(listing.hand) if listing.hand is not None else "Not listed"
+    year = str(listing.year) if listing.year is not None else "Not listed"
     return (
-        f"{heading}: {listing.title}\nPrice: {price}\nMileage: {mileage}\nHand: {hand}\n{listing.url}"
+        f"{heading}: {listing.title}\nYear: {year}\nPrice: {price}\nMileage: {mileage}\n"
+        f"Hand: {hand}\n{listing.url}"
     )
 
 

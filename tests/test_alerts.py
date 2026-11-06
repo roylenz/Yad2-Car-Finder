@@ -42,7 +42,7 @@ class AlertTests(unittest.TestCase):
             path = str(Path(directory) / "bot.sqlite3")
             state = BotState(path)
             state.set_search(123, EXAMPLE_URL, 10)
-            old = CarListing("https://www.yad2.co.il/vehicles/item/abc", "Test car", 90000, 45000, 2)
+            old = CarListing("https://www.yad2.co.il/vehicles/item/abc", "Test car", 90000, 45000, 2, 2021)
             state.save_listings(123, [old])
 
             reloaded = BotState(path)
@@ -56,6 +56,7 @@ class AlertTests(unittest.TestCase):
             self.assertEqual(drops[0][1], 90000)
             self.assertIn("45,000 km", format_listing(*drops[0]))
             self.assertIn("Hand: 2", format_listing(*drops[0]))
+            self.assertIn("Year: 2021", format_listing(*drops[0]))
             self.assertIn("Hand: Not listed", format_listing(new[0]))
             self.assertIn("₪90,000 → ₪85,000", format_listing(*drops[0]))
 
@@ -206,7 +207,13 @@ class FeedTests(unittest.IsolatedAsyncioTestCase):
         listings = {}
         await Yad2CarFinder._fetch_page_results(Tab(), listings)
         listing = listings["https://www.yad2.co.il/vehicles/item/abc"]
-        self.assertEqual((listing.title, listing.price, listing.hand), ("Test car", 85000, 2))
+        self.assertEqual(
+            (listing.title, listing.price, listing.hand, listing.year), ("Test car", 85000, 2, 2021)
+        )
+
+    def test_year_ignores_prices_and_mileage(self):
+        self.assertEqual(Yad2CarFinder._parse_year("Car\n120,000 ₪\n2,019 km\n2019 • יד 1"), 2019)
+        self.assertIsNone(Yad2CarFinder._parse_year("Car\n120,000 ₪"))
 
 
 if __name__ == "__main__":
