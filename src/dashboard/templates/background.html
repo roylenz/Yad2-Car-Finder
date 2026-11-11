@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Background · Yad2 Car Finder{% endblock %}
+{% block head %}
+<meta http-equiv="refresh" content="10">
+<style>
+  .bar { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; margin-top: 8px; }
+  .bar > span { display: block; height: 100%; background: var(--accent); }
+  .stat-row { display: flex; gap: 24px; flex-wrap: wrap; margin-top: 8px; }
+</style>
+{% endblock %}
+{% block content %}
+<h1>Background work</h1>
+<p class="muted">Photo downloads and processors run after each scan and pause while a scan runs. Times are Israel time. This page refreshes every 10 seconds.</p>
+
+<div class="card">
+  {% if status %}
+    {% set labels = {"idle": "Idle", "downloading": "Downloading photos", "processing": "Processing", "paused": "Paused", "error": "Error"} %}
+    <div><span class="badge {{ status.state }}">{{ labels.get(status.state, status.state) }}</span>
+      {% if status.state == "processing" %}<strong>{{ status.detail }}</strong>
+      {% elif status.detail and status.state != "downloading" %}{{ status.detail }}{% endif %}
+      <span class="muted">· since {{ status.started_at | local }} · updated {{ status.updated_at | local }}</span></div>
+    {% if status.total %}
+      {% set pct = (100 * status.done / status.total) | round | int %}
+      <div class="bar"><span style="width: {{ pct }}%"></span></div>
+      <div class="muted" style="margin-top:4px">{{ status.done | number }} of {{ status.total | number }}{% if status.state == "processing" %} in the backlog when this pass started{% endif %}</div>
+    {% endif %}
+    {% if status.state == "idle" and status.next_run_at %}
+      <div style="margin-top:6px">Nothing to do. Next check <strong>{{ status.next_run_at | until }}</strong> <span class="muted">({{ status.next_run_at | local }}) or right after the next scan</span></div>
+    {% endif %}
+  {% endif %}
+  {% if stale %}<p style="margin:8px 0 0" class="impact-high"><span class="badge error">Check</span> {{ stale }}</p>{% endif %}
+</div>
+
+<div class="tiles" style="margin-top:12px">
+  <div class="card tile"><div class="label">Photos archived</div><div class="value">{{ photos.stored | number }}</div>
+    <div class="sub">{{ photos.waiting | number }} waiting · {{ photos.failed | number }} failed</div></div>
+  <div class="card tile"><div class="label">Claude spend this month</div><div class="value">${{ "%.2f" | format(spent) }}</div>
+    <div class="sub">of ${{ "%.0f" | format(budget) }} budget · {{ claude_model }}</div>
+    <div class="bar"><span style="width: {{ [100 * spent / budget if budget else 0, 100] | min | round | int }}%"></span></div></div>
+</div>
+
+<h2>Processors</h2>
+<div class="card scroll">
+  <table>
+    <thead><tr><th>Processor</th><th>Runs on</th><th class="num">Done</th><th class="num">Waiting</th><th class="num">Retrying</th><th class="num">Failed</th><th class="hide-sm">Last result</th></tr></thead>
+    <tbody>
+    {% for row in processors %}
+      <tr>
+        <td>{{ row.name }} <span class="muted">v{{ row.version }}</span>
+          {% if not row.enabled %}<div class="muted">Off: {{ row.reason }}</div>{% endif %}</td>
+        <td class="secondary">{{ "each photo" if row.target == "photo" else "each ad" }}</td>
+        <td class="num">{{ row.done | number }}</td>
+        <td class="num">{% if row.waiting %}<strong>{{ row.waiting | number }}</strong>{% else %}0{% endif %}</td>
+        <td class="num">{{ row.retrying | number }}</td>
+        <td class="num">{% if row.failed %}<span class="impact-high">{{ row.failed | number }}</span>{% else %}0{% endif %}</td>
+        <td class="secondary hide-sm">{{ row.last_at | when }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted" style="margin:8px 0 0">"Waiting" counts targets that are ready now. Ads wait for their photos to download, and the plate check waits until each photo has been read.</p>
+</div>
+
+{% if errors %}
+<h2>Recent errors</h2>
+<div class="card scroll">
+  <table>
+    <thead><tr><th>When</th><th>Processor</th><th>Target</th><th>Error</th></tr></thead>
+    <tbody>
+    {% for row in errors %}
+      <tr>
+        <td class="secondary">{{ row.created_at | local }}</td>
+        <td>{{ row.processor }}</td>
+        <td>{% if row.target_type == "ad" %}<a href="/ads/{{ row.target_id }}">Ad {{ row.target_id }}</a>{% elif row.photo_token %}<a href="/ads/{{ row.photo_token }}">Photo of {{ row.photo_token }}</a>{% else %}Photo {{ row.target_id[:8] }}{% endif %}</td>
+        <td class="secondary">{{ row.error }} <span class="muted">(attempt {{ row.attempts }})</span></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<h2>Recent results</h2>
+<div class="card scroll">
+  {% if recent %}
+  <table>
+    <thead><tr><th>When</th><th>Processor</th><th>Target</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for row in recent %}
+      <tr>
+        <td class="secondary">{{ row.created_at | local }}</td>
+        <td>{{ row.processor }}</td>
+        <td>{% if row.target_type == "ad" %}<a href="/ads/{{ row.target_id }}">Ad {{ row.target_id }}</a>{% elif row.photo_token %}<a href="/ads/{{ row.photo_token }}">Photo of {{ row.photo_token }}</a>{% else %}Photo {{ row.target_id[:8] }}{% endif %}</td>
+        <td><span class="badge {{ 'ok' if row.status == 'ok' else 'error' }}">{{ row.status }}</span></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No results yet.</p>
+  {% endif %}
+</div>
+{% endblock %}

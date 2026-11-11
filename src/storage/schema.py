@@ -47,6 +47,20 @@ scans = Table(
     Index("ix_scans_chat_queued", "chat_id", "queued_at"),
 )
 
+# What the bot's background pipeline is doing right now, for the dashboard (one row per worker).
+background_status = Table(
+    "background_status",
+    metadata,
+    Column("worker", String(32), primary_key=True),
+    Column("state", String(16), nullable=False),  # idle, downloading, processing, paused, error
+    Column("detail", Text),
+    Column("done", Integer),
+    Column("total", Integer),
+    Column("started_at", DateTime),  # when the current state began
+    Column("next_run_at", DateTime),  # idle: when the next pass starts at the latest
+    Column("updated_at", DateTime, nullable=False),
+)
+
 access = Table(
     "access",
     metadata,

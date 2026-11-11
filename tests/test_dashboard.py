@@ -93,6 +93,27 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("Bot restarted before the scan finished", page)
         self.assertNotIn("Scanning", page)
 
+    def test_background_page_shows_live_status_and_backlog(self):
+        from storage.background_status import StatusBoard
+        from tracking.background import BackgroundPipeline
+
+        page = self.client.get("/background").text
+        self.assertIn("No status yet", page)
+        for name in ("photo_info", "plate_reader", "plate_registry", "claude_condition"):
+            self.assertIn(name, page)
+        self.assertIn("Off: ANTHROPIC_API_KEY is not set", page)
+
+        StatusBoard(self.state.engine).set("processing", "plate_reader", 12, 40)
+        page = self.client.get("/background").text
+        self.assertIn("plate_reader</strong>", page)
+        self.assertIn("12 of 40", page)
+        self.assertIn("width: 30%", page)
+
+        pipeline = BackgroundPipeline(self.state.ads, self.store)
+        pipeline.busy = lambda: True
+        asyncio.run(pipeline.run_once())
+        self.assertIn("Waiting for the running scan to finish", self.client.get("/background").text)
+
     def test_ad_page_shows_test_and_registration_details(self):
         text = self.client.get("/ads/6rg1e7dp").text
         for expected in (

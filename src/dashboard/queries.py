@@ -3,7 +3,7 @@
 import datetime
 from dataclasses import dataclass
 
-from sqlalchemy import Engine, and_, func, or_, select, true
+from sqlalchemy import Engine, and_, case, func, or_, select, true
 
 from storage.db import utcnow
 from tracking.tracker import price_floor, search_max_price
@@ -421,3 +421,101 @@ def scan_counts(engine: Engine, since: datetime.datetime) -> dict[str, int]:
             .group_by(scans.c.status)
         ).all()
     return {status: count for status, count in rows}
+
+
+@dataclass
+class ProcessorStatus:
+    name: str
+    target: str
+    version: str
+    enabled: bool
+    reason: str | None  # why it is not running
+    done: int  # successful results for the current version
+    failed: int  # gave up after the maximum attempts
+    retrying: int
+    waiting: int  # ready to run now
+    last_at: datetime.datetime | None
+
+
+def processor_statuses(engine: Engine, enabled: list) -> list[ProcessorStatus]:
+    """Every known processor with its backlog, in the order the bot runs them."""
+    from processing.registry import AVAILABLE
+    from processing.runner import MAX_ATTEMPTS, pending_count
+
+    running = {processor.name: processor for processor in enabled}
+    ordered = [*enabled, *(cls() for name, cls in AVAILABLE.items() if name not in running)]
+    statuses = []
+    with engine.connect() as db:
+        for processor in ordered:
+            outcome = case(
+                (analysis_results.c.status == "ok", "ok"),
+                (analysis_results.c.attempts >= MAX_ATTEMPTS, "failed"),
+                else_="retrying",
+            ).label("outcome")
+            rows = dict(
+                db.execute(
+                    select(outcome, func.count())
+                    .where(
+                        analysis_results.c.processor == processor.name,
+                        analysis_results.c.version == processor.version,
+                    )
+                    .group_by(outcome)
+                ).all()
+            )
+            last_at = db.execute(
+                select(func.max(analysis_results.c.created_at)).where(
+                    analysis_results.c.processor == processor.name
+                )
+            ).scalar_one()
+            is_enabled = processor.name in running
+            reason = None
+            if not is_enabled:
+                reason = getattr(type(processor), "available", lambda: None)() or "Not in PROCESSORS"
+            statuses.append(
+                ProcessorStatus(
+                    processor.name, processor.target, processor.version, is_enabled, reason,
+                    rows.get("ok", 0), rows.get("failed", 0), rows.get("retrying", 0),
+                    pending_count(engine, processor), last_at,
+                )
+            )
+    return statuses
+
+
+def photo_counts(engine: Engine) -> dict[str, int]:
+    with engine.connect() as db:
+        state = case(
+            (photos.c.sha256.is_not(None), "stored"),
+            (photos.c.download_attempts >= 5, "failed"),
+            else_="waiting",
+        ).label("state")
+        rows = db.execute(select(state, func.count()).group_by(state)).all()
+    return {"stored": 0, "waiting": 0, "failed": 0, **dict(rows)}
+
+
+def recent_results(engine: Engine, limit: int = 30, errors_only: bool = False) -> list:
+    photo_token = (
+        select(photos.c.token)
+        .where(photos.c.sha256 == analysis_results.c.target_id)
+        .order_by(photos.c.id)
+        .limit(1)
+        .correlate(analysis_results)
+        .scalar_subquery()
+    )
+    statement = (
+        select(
+            analysis_results.c.processor,
+            analysis_results.c.target_type,
+            analysis_results.c.target_id,
+            analysis_results.c.status,
+            analysis_results.c.error,
+            analysis_results.c.attempts,
+            analysis_results.c.created_at,
+            photo_token.label("photo_token"),
+        )
+        .order_by(analysis_results.c.created_at.desc())
+        .limit(limit)
+    )
+    if errors_only:
+        statement = statement.where(analysis_results.c.status == "error")
+    with engine.connect() as db:
+        return db.execute(statement).all()

@@ -15,6 +15,65 @@ MAX_ATTEMPTS = 3
 MAX_DOWNLOAD_ATTEMPTS = 5
 
 
+def _finished(processor: Processor, target_id_column):
+    return exists().where(
+        and_(
+            analysis_results.c.target_type == processor.target,
+            analysis_results.c.target_id == target_id_column,
+            analysis_results.c.processor == processor.name,
+            analysis_results.c.version == processor.version,
+            or_(
+                analysis_results.c.status == "ok",
+                analysis_results.c.attempts >= MAX_ATTEMPTS,
+            ),
+        )
+    )
+
+
+def pending_conditions(processor: Processor) -> list:
+    """WHERE conditions selecting the targets (photos or ads) a processor still has to run on."""
+    if processor.target == "photo":
+        return [photos.c.sha256.is_not(None), ~_finished(processor, photos.c.sha256)]
+    conditions = [
+        ~_finished(processor, ads.c.token),
+        # Wait until the ad's photos are downloaded (or given up on).
+        ~exists().where(
+            photos.c.token == ads.c.token,
+            photos.c.sha256.is_(None),
+            photos.c.download_attempts < MAX_DOWNLOAD_ATTEMPTS,
+        ),
+    ]
+    for required in processor.requires:
+        # ...and until every downloaded photo has the required photo results.
+        conditions.append(
+            ~exists().where(
+                photos.c.token == ads.c.token,
+                photos.c.sha256.is_not(None),
+                ~exists().where(
+                    analysis_results.c.target_type == "photo",
+                    analysis_results.c.target_id == photos.c.sha256,
+                    analysis_results.c.processor == required,
+                    or_(
+                        analysis_results.c.status == "ok",
+                        analysis_results.c.attempts >= MAX_ATTEMPTS,
+                    ),
+                ),
+            )
+        )
+    if processor.active_only:
+        conditions.append(ads.c.removed_at.is_(None))
+    return conditions
+
+
+def pending_count(engine: Engine, processor: Processor) -> int:
+    """How many targets are ready and waiting for this processor."""
+    column = photos.c.sha256 if processor.target == "photo" else ads.c.token
+    with engine.connect() as db:
+        return db.execute(
+            select(func.count(func.distinct(column))).where(*pending_conditions(processor))
+        ).scalar_one()
+
+
 class ProcessingRunner:
     def __init__(self, engine: Engine, store: PhotoStore, processors: list[Processor]) -> None:
         self.engine = engine
@@ -24,15 +83,26 @@ class ProcessingRunner:
         for processor in processors:
             processor.setup(engine)
 
-    async def run_pending(self, limit: int = 50, paused: Callable[[], bool] | None = None) -> int:
+    async def run_pending(
+        self,
+        limit: int = 50,
+        paused: Callable[[], bool] | None = None,
+        progress: Callable[[str, int, int], None] | None = None,
+    ) -> int:
         """Process up to `limit` targets per processor; return how many results were saved.
 
         `paused` is checked before each target; when it returns True the pass stops early
         (the bot pauses processing while a scan runs, so the browser has the CPU).
+        `progress(processor, done, waiting)` is called before each target, where `waiting` is
+        the processor's whole backlog when the pass started.
         """
         done = 0
         for processor in self.processors:
-            for target_id, target in self._pending(processor, limit):
+            targets = self._pending(processor, limit)
+            waiting = pending_count(self.engine, processor) if targets and progress else 0
+            for index, (target_id, target) in enumerate(targets):
+                if progress:
+                    progress(processor.name, index, waiting)
                 if paused and paused():
                     logger.info("Processing paused while a scan runs", results=done)
                     return done
@@ -52,63 +122,21 @@ class ProcessingRunner:
             logger.info("Processing pass finished", results=done)
         return done
 
-    def _finished(self, processor: Processor, target_id_column):
-        return exists().where(
-            and_(
-                analysis_results.c.target_type == processor.target,
-                analysis_results.c.target_id == target_id_column,
-                analysis_results.c.processor == processor.name,
-                analysis_results.c.version == processor.version,
-                or_(
-                    analysis_results.c.status == "ok",
-                    analysis_results.c.attempts >= MAX_ATTEMPTS,
-                ),
-            )
-        )
-
     def _pending(self, processor: Processor, limit: int):
         with self.engine.connect() as db:
             if processor.target == "photo":
                 rows = db.execute(
                     select(photos.c.sha256, func.min(photos.c.path).label("path"))
-                    .where(photos.c.sha256.is_not(None), ~self._finished(processor, photos.c.sha256))
+                    .where(*pending_conditions(processor))
                     .group_by(photos.c.sha256)
                     .limit(limit)
                 ).all()
                 return [
                     (row.sha256, PhotoTarget(row.sha256, self.store.path(row.path))) for row in rows
                 ]
-            conditions = [
-                ~self._finished(processor, ads.c.token),
-                # Wait until the ad's photos are downloaded (or given up on).
-                ~exists().where(
-                    photos.c.token == ads.c.token,
-                    photos.c.sha256.is_(None),
-                    photos.c.download_attempts < MAX_DOWNLOAD_ATTEMPTS,
-                ),
-            ]
-            for required in processor.requires:
-                # ...and until every downloaded photo has the required photo results.
-                conditions.append(
-                    ~exists().where(
-                        photos.c.token == ads.c.token,
-                        photos.c.sha256.is_not(None),
-                        ~exists().where(
-                            analysis_results.c.target_type == "photo",
-                            analysis_results.c.target_id == photos.c.sha256,
-                            analysis_results.c.processor == required,
-                            or_(
-                                analysis_results.c.status == "ok",
-                                analysis_results.c.attempts >= MAX_ATTEMPTS,
-                            ),
-                        ),
-                    )
-                )
-            if processor.active_only:
-                conditions.append(ads.c.removed_at.is_(None))
             tokens = db.execute(
                 select(ads.c.token)
-                .where(*conditions)
+                .where(*pending_conditions(processor))
                 .order_by(ads.c.first_seen_at.desc())
                 .limit(limit)
             ).scalars().all()

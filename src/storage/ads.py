@@ -301,6 +301,14 @@ class AdRepository:
             ).all()
         return [(row.id, row.source_url) for row in rows]
 
+    def pending_photo_count(self, max_attempts: int = 5) -> int:
+        with self.engine.connect() as db:
+            return db.execute(
+                select(func.count())
+                .select_from(photos)
+                .where(photos.c.sha256.is_(None), photos.c.download_attempts < max_attempts)
+            ).scalar_one()
+
     def photo_stored(self, photo_id: int, sha256: str, path: str, size_bytes: int) -> None:
         with self.engine.begin() as db:
             db.execute(

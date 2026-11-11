@@ -65,6 +65,7 @@ src/
     db.py                    # engine from DATABASE_URL / DATA_DIR, Alembic migrate(), upsert helper
     ads.py                   # AdRepository: catalog upserts, change history, photo rows, chat state
     scans.py                 # ScanLog: one row per scan (status, progress, counts) + next scan time
+    background_status.py     # StatusBoard: live background pipeline state for the dashboard
     photos.py                # PhotoStore protocol + LocalPhotoStore (content-addressed by sha256)
     migrations/              # Alembic migrations (run automatically at startup)
   tracking/

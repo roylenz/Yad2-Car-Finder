@@ -18,6 +18,9 @@ from sqlalchemy import Engine
 
 from dashboard import auth, fields, queries
 from processing import plates
+from processing.processors.claude_condition import ClaudeConditionProcessor
+from processing.registry import enabled_processors
+from storage.background_status import read_status
 from storage.db import data_dir, default_database_url, get_engine, utcnow
 from storage.photos import LocalPhotoStore
 
@@ -144,6 +147,11 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
     authenticator = authenticator or auth.from_env()
     thumbs_dir = data_dir() / "thumbs"
 
+    # Same .env as the bot, so this matches what the bot runs.
+    processors = enabled_processors()
+    claude = ClaudeConditionProcessor()
+    claude.setup(engine)
+
     def require_login(request: Request) -> str:
         token = request.headers.get("cf-access-jwt-assertion") or request.cookies.get(
             "CF_Authorization"
@@ -192,6 +200,34 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
                 "counts": queries.scan_counts(engine, utcnow() - datetime.timedelta(days=1)),
                 "chat": chat_id,
                 "nav": "scans",
+            },
+        )
+
+    @pages.get("/background", response_class=HTMLResponse)
+    def background_page(request: Request):
+        status = read_status(engine)
+        now = utcnow()
+        stale = None
+        if status is None:
+            stale = "No status yet. It appears after the bot's first background pass."
+        elif status.state == "idle" and status.next_run_at and now - status.next_run_at > datetime.timedelta(minutes=5):
+            stale = f"Expected to run {_when(status.next_run_at)}. Is the bot running?"
+        elif status.state != "idle" and now - status.updated_at > datetime.timedelta(minutes=10):
+            stale = f"No update {_when(status.updated_at)}. The bot may have stopped."
+        return templates.TemplateResponse(
+            request,
+            "background.html",
+            {
+                "status": status,
+                "stale": stale,
+                "processors": queries.processor_statuses(engine, processors),
+                "photos": queries.photo_counts(engine),
+                "spent": claude.spent_this_month(),
+                "budget": claude.budget,
+                "claude_model": claude.model,
+                "recent": queries.recent_results(engine),
+                "errors": queries.recent_results(engine, 10, errors_only=True),
+                "nav": "background",
             },
         )
 
