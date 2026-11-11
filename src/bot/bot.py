@@ -36,7 +36,7 @@ from bot.handlers import (
     year_min_callback,
     scanner,
 )
-from bot.scanner import schedule_scan
+from bot.scanner import first_delay, schedule_scan
 from tracking.background import BackgroundPipeline
 
 
@@ -52,7 +52,8 @@ async def restore_searches(app: Application) -> None:
     app.bot_data["pipeline"] = pipeline
     for chat_id, url, interval in scanner.state.active_searches():
         if scanner.access_check(chat_id):
-            schedule_scan(app.job_queue, scanner, chat_id, url, interval, first=5)
+            first = first_delay(scanner.scan_log.last_started(chat_id), interval)
+            schedule_scan(app.job_queue, scanner, chat_id, url, interval, first=first)
     logger.info("Restored saved searches", count=len(scanner.state.active_searches()))
 
 

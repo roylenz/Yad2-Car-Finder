@@ -2,7 +2,7 @@
 
 import datetime
 
-from sqlalchemy import Engine, select, update
+from sqlalchemy import Engine, func, select, update
 
 from storage.db import utcnow
 from storage.schema import scans, searches
@@ -75,6 +75,13 @@ class ScanLog:
             db.execute(
                 update(searches).where(searches.c.chat_id == chat_id).values(next_scan_at=when)
             )
+
+    def last_started(self, chat_id: int) -> datetime.datetime | None:
+        """When this chat's most recent scan started (naive UTC)."""
+        with self.engine.connect() as db:
+            return db.execute(
+                select(func.max(scans.c.started_at)).where(scans.c.chat_id == chat_id)
+            ).scalar_one()
 
     def recent(self, limit: int = 100, chat_id: int | None = None) -> list:
         statement = select(scans).order_by(scans.c.queued_at.desc(), scans.c.id.desc()).limit(limit)

@@ -128,7 +128,8 @@ enabled processors run in the background.
 Every scan is logged with its status (queued, running, ok, failed, cancelled, or interrupted
 by a restart), live progress, duration, result counts and error. The dashboard's Scans page
 shows this history and when each search scans next; a scan that is still running when the
-next one is due makes that one skip.
+next one is due makes that one skip. After a restart, each search scans when its next regular
+scan is due rather than straight away, since back-to-back scans trip Yad2's bot check.
 
 | Setting (`.env`) | Purpose |
 | --- | --- |

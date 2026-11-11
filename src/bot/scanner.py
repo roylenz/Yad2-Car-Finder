@@ -89,6 +89,17 @@ def schedule_scan(
         )
 
 
+def first_delay(last_started: datetime.datetime | None, interval_minutes: int, now: datetime.datetime | None = None) -> int:
+    """Seconds until a restored search should scan: keep its regular rhythm across restarts.
+
+    Scanning right after a restart, seconds after the previous scan, trips Yad2's bot check.
+    """
+    if last_started is None or interval_minutes <= 0:
+        return 5
+    elapsed = ((now or utcnow()) - last_started).total_seconds()
+    return max(5, int(interval_minutes * 60 - elapsed))
+
+
 def _next_run(job, interval_minutes: int) -> datetime.datetime | None:
     """When this repeating job fires next (naive UTC), or None for a one-time scan."""
     if interval_minutes <= 0:

@@ -359,6 +359,17 @@ class ProcessingTests(TempStateTestCase):
 
 
 
+class RestartTimingTests(unittest.TestCase):
+    def test_restart_keeps_the_scan_rhythm(self):
+        from bot.scanner import first_delay
+
+        now = datetime.datetime(2026, 11, 11, 21, 29)
+        just_scanned = now - datetime.timedelta(seconds=30)
+        self.assertEqual(first_delay(just_scanned, 10, now), 570)
+        self.assertEqual(first_delay(now - datetime.timedelta(minutes=25), 10, now), 5)
+        self.assertEqual(first_delay(None, 10, now), 5)
+
+
 class ScanFailureTests(unittest.IsolatedAsyncioTestCase):
     async def test_failed_scan_reports_reason_to_chat(self):
         from types import SimpleNamespace
