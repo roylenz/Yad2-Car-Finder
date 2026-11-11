@@ -59,6 +59,19 @@
   <div class="chart-box"><canvas id="price-chart" aria-label="Price over time" role="img"></canvas></div>
 </div>
 
+{% if same_car %}
+<h2>Same car, other ads <span class="muted">({{ same_car | length }})</span></h2>
+<div class="card">
+  <p class="muted" style="margin:0 0 8px">Reposts of this car are merged: days on the market count from the first ad, and the price history and change log cover all of them.</p>
+  <ul class="findings" style="margin:0">
+    {% for other in same_car %}
+    <li><a href="/ads/{{ other.token }}" dir="auto">{{ other.title }}</a> · {{ other.price | shekels }} · first seen {{ other.first_seen_at | when }}{% if other.removed_at %} · <span class="badge removed">Removed</span>{% endif %}
+      {% if other.reasons %}<div class="muted" style="font-size:13px">{{ other.reasons | join("; ") }}</div>{% endif %}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
 <h2>Photos <span class="muted">({{ photos | length }})</span></h2>
 <div class="card">
   {% if photos %}
@@ -91,13 +104,19 @@
         <h3 style="font-size:14px; margin:14px 0 6px">Ad vs registry</h3>
         <ul class="findings">{% for item in plate.discrepancies %}<li class="impact-medium">{{ item }}</li>{% endfor %}</ul>
         {% endif %}
-        {% if same_plate %}
-        <h3 style="font-size:14px; margin:14px 0 6px">Other ads of this car</h3>
-        <ul class="findings">
-          {% for other in same_plate %}
-          <li><a href="/ads/{{ other.token }}" dir="auto">{{ other.title }}</a> · {{ other.price | shekels }} · first seen {{ other.first_seen_at | when }}{% if other.removed_at %} · <span class="badge removed">Removed</span>{% endif %}</li>
+        {% if ownership %}
+        <h3 style="font-size:14px; margin:14px 0 6px">Owners <span class="muted">(registry, by month)</span></h3>
+        <p style="margin:0 0 6px">
+          {{ ownership_summary.hands }} hand{{ "s" if ownership_summary.hands != 1 }} not counting dealers{% if ownership_summary.agency_first %} or the importer's first registration{% endif %}{% if ad.hand %} (ad says hand {{ ad.hand }}){% endif %}.
+          {% if ownership_summary.with_dealer %}
+          <span class="impact-high">With {{ "a dealer" if ownership_summary.dealers_in_a_row == 1 else ownership_summary.dealers_in_a_row ~ " dealers in a row" }} since {{ ownership_summary.dealer_since }} ({{ ownership_summary.dealer_months }} month{{ "s" if ownership_summary.dealer_months != 1 }})</span>{% if ownership_summary.last_owner %}; before that {{ owner_labels.get(ownership_summary.last_owner, ownership_summary.last_owner) | lower }} owner since {{ ownership_summary.last_owner_since }}{% endif %}.
+          {% endif %}
+        </p>
+        <ol class="findings" style="margin:0">
+          {% for entry in ownership %}
+          <li>{{ entry.month }} · {% if entry.owner == "dealer" %}<span class="secondary">Dealer</span>{% else %}{{ owner_labels.get(entry.owner, entry.owner) }}{% endif %}</li>
           {% endfor %}
-        </ul>
+        </ol>
         {% endif %}
         {% if plate.registry %}
         <h3 style="font-size:14px; margin:14px 0 6px">Registry record</h3>
@@ -189,6 +208,10 @@
         {% if ad.listed_at %}<dt>Posted on Yad2</dt><dd>{{ ad.listed_at.strftime("%d/%m/%Y %H:%M") }} UTC</dd>{% endif %}
         <dt>First seen by the bot</dt><dd>{{ ad.first_seen_at.strftime("%d/%m/%Y %H:%M") }} UTC</dd>
         <dt>Last seen</dt><dd>{{ ad.last_seen_at | when }}</dd>
+        {% if ad.removed_at %}<dt>Removed</dt><dd>{{ ad.removed_at | when }}</dd>{% endif %}
+        {% if ad.sale_status == "sold" %}<dt>Sale</dt><dd><span class="badge ok">Sold</span> new {{ owner_labels.get(ad.sold_to, ad.sold_to) | lower }} owner in the registry from {{ ad.sold_month }}</dd>
+        {% elif ad.sale_status == "watching" %}<dt>Sale</dt><dd>Watching the registry for a new owner (for a week after removal)</dd>
+        {% elif ad.sale_status == "not_seen" %}<dt>Sale</dt><dd class="muted">No new owner in the registry within a week of removal</dd>{% endif %}
         {% if ad.attributes and ad.attributes.tags %}<dt>Tags</dt><dd><bdi>{{ ad.attributes.tags | join(", ") }}</bdi></dd>{% endif %}
         {% if chats %}<dt>In searches of</dt><dd>{% for chat in chats %}<a href="/ads?chat={{ chat }}&status=all">Chat {{ chat }}</a>{{ ", " if not loop.last }}{% endfor %}</dd>{% endif %}
       </dl>
@@ -202,10 +225,10 @@
     <h2>Change log</h2>
     <div class="card scroll">
       <table>
-        <thead><tr><th>When</th><th>Change</th></tr></thead>
+        <thead><tr><th>When</th>{% if same_car %}<th>Ad</th>{% endif %}<th>Change</th></tr></thead>
         <tbody>
         {% for row in history %}
-          <tr><td class="secondary">{{ row.observed_at.strftime("%Y-%m-%d %H:%M") }}</td><td>{{ row.changes | change_summary }}</td></tr>
+          <tr><td class="secondary">{{ row.observed_at.strftime("%Y-%m-%d %H:%M") }}</td>{% if same_car %}<td>{% if row.token == ad.token %}<span class="muted">This ad</span>{% else %}<a href="/ads/{{ row.token }}">{{ row.token }}</a>{% endif %}</td>{% endif %}<td>{{ row.changes | change_summary }}</td></tr>
         {% endfor %}
         </tbody>
       </table>

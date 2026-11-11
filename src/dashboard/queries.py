@@ -3,15 +3,114 @@
 import datetime
 from dataclasses import dataclass
 
-from sqlalchemy import Engine, and_, case, func, or_, select, true
+from sqlalchemy import Engine, and_, case, exists, func, or_, select, true
 
+from storage import cars
 from storage.db import utcnow
 from tracking.tracker import price_floor, search_max_price
 from storage.schema import ad_snapshots, ads, analysis_results, chat_ads, photos, scans, searches
 
+def _car_key(table):
+    return func.coalesce(table.c.car_id, table.c.token)
+
+
+def _market_since():
+    """When the car first went on the market: its earliest ad, counting reposts."""
+    other = ads.alias("same_car")
+    return (
+        select(func.min(func.coalesce(other.c.listed_at, other.c.first_seen_at)))
+        .where(_car_key(other) == _car_key(ads))
+        .scalar_subquery()
+    )
+
+
+def _repost_count():
+    other = ads.alias("repost")
+    return (
+        select(func.count() - 1).where(_car_key(other) == _car_key(ads)).scalar_subquery()
+    )
+
+
+def _latest_of_car():
+    """Only the newest ad of each car (older ads of a reposted car are folded into it)."""
+    newer = ads.alias("newer")
+    return ~exists().where(
+        _car_key(newer) == _car_key(ads),
+        or_(
+            newer.c.first_seen_at > ads.c.first_seen_at,
+            and_(newer.c.first_seen_at == ads.c.first_seen_at, newer.c.token > ads.c.token),
+        ),
+    )
+
+
+def _first_price(floor: int):
+    """The car's first real asking price, across all its ads (reposts included)."""
+    owner = ads.alias("first_ad")
+    return (
+        select(ad_snapshots.c.price)
+        .join(owner, owner.c.token == ad_snapshots.c.token)
+        .where(_car_key(owner) == _car_key(ads), ad_snapshots.c.price >= floor)
+        .order_by(ad_snapshots.c.observed_at, ad_snapshots.c.id)
+        .limit(1)
+        .scalar_subquery()
+    )
+
+
+def _price_drop(floor: int):
+    """Shekels the asking price fell since the car first went on the market (negative: rose)."""
+    return case((ads.c.price >= floor, _first_price(floor) - ads.c.price), else_=None)
+
+
+def _drop_count(floor: int):
+    """How many times the asking price was lowered, across all the car's ads."""
+    owner = ads.alias("drop_ad")
+    old = func.json_extract(ad_snapshots.c.changes, "$.price[0]")
+    new = func.json_extract(ad_snapshots.c.changes, "$.price[1]")
+    drops_within_ads = (
+        select(func.count())
+        .select_from(ad_snapshots.join(owner, owner.c.token == ad_snapshots.c.token))
+        .where(_car_key(owner) == _car_key(ads), new < old, new >= floor)
+        .scalar_subquery()
+    )
+    # A repost that starts lower than the car's previous ad last asked counts as a drop too.
+    previous, later = ads.alias("previous_ad"), ads.alias("later_ad")
+    later_first = (
+        select(ad_snapshots.c.price)
+        .where(ad_snapshots.c.token == later.c.token, ad_snapshots.c.price >= floor)
+        .order_by(ad_snapshots.c.observed_at, ad_snapshots.c.id)
+        .limit(1)
+        .scalar_subquery()
+    )
+    previous_last = (
+        select(ad_snapshots.c.price)
+        .where(ad_snapshots.c.token == previous.c.token, ad_snapshots.c.price >= floor)
+        .order_by(ad_snapshots.c.observed_at.desc(), ad_snapshots.c.id.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+    earlier = ads.alias("earlier_ad")
+    closest_previous = (
+        select(func.max(earlier.c.first_seen_at))
+        .where(_car_key(earlier) == _car_key(later), earlier.c.first_seen_at < later.c.first_seen_at)
+        .scalar_subquery()
+    )
+    drops_between_ads = (
+        select(func.count())
+        .select_from(later.join(previous, _car_key(previous) == _car_key(later)))
+        .where(
+            _car_key(later) == _car_key(ads),
+            previous.c.first_seen_at == closest_previous,
+            later_first < previous_last,
+        )
+        .scalar_subquery()
+    )
+    return drops_within_ads + drops_between_ads
+
+
 SORTS = {
-    "seen": ads.c.first_seen_at.desc(),
-    "listed": func.coalesce(ads.c.listed_at, ads.c.first_seen_at).asc(),
+    # Days on the market, counted from the car's first ad.
+    "seen": _market_since().desc(),
+    "listed": _market_since().asc(),
     "price": ads.c.price.asc(),
     "price_desc": ads.c.price.desc(),
     "km": ads.c.km.asc(),
@@ -24,7 +123,7 @@ MULTI_SORTS = {
 
 
 def days_listed(row, now: datetime.datetime | None = None) -> int:
-    start = row.listed_at or row.first_seen_at
+    start = getattr(row, "market_since", None) or row.listed_at or row.first_seen_at
     end = row.removed_at or now or utcnow()
     return max((end - start).days, 0)
 
@@ -127,7 +226,7 @@ def list_ads(
     limit: int = 100,
     offset: int = 0,
 ) -> tuple[list, int]:
-    conditions = []
+    conditions = [_latest_of_car()]
     if status == "active":
         conditions.append(ads.c.removed_at.is_(None))
     elif status == "removed":
@@ -154,19 +253,20 @@ def list_ads(
             ads.c.token.in_(select(chat_ads.c.token).where(chat_ads.c.chat_id == chat_id))
         )
     where = and_(true(), *conditions)
-    first_price = (
-        select(ad_snapshots.c.price)
-        .where(ad_snapshots.c.token == ads.c.token, ad_snapshots.c.price.is_not(None))
-        .order_by(ad_snapshots.c.observed_at)
-        .limit(1)
-        .scalar_subquery()
-    )
+    floor = ignored_price_floor(engine)
     with engine.connect() as db:
         total = db.execute(select(func.count()).select_from(ads).where(where)).scalar_one()
         rows = db.execute(
-            select(ads, _cover_photo().label("cover"), first_price.label("first_price"))
+            select(
+                ads,
+                _cover_photo().label("cover"),
+                _price_drop(floor).label("price_drop"),
+                _drop_count(floor).label("drops"),
+                _market_since().label("market_since"),
+                _repost_count().label("reposts"),
+            )
             .where(where)
-            .order_by(*_order(sort), ads.c.token)
+            .order_by(*_order(sort, floor), ads.c.token)
             .limit(limit)
             .offset(offset)
         ).all()
@@ -203,16 +303,27 @@ def ad_detail(engine: Engine, token: str):
         chats = list(
             db.execute(select(chat_ads.c.chat_id).where(chat_ads.c.token == token)).scalars()
         )
-        same_plate = (
-            db.execute(
-                select(ads.c.token, ads.c.title, ads.c.price, ads.c.first_seen_at, ads.c.removed_at)
-                .where(ads.c.plate == ad.plate, ads.c.token != token)
-                .order_by(ads.c.first_seen_at)
+        group = cars.group_tokens(db, token)
+        linked = db.execute(
+            select(ads.c.token, ads.c.title, ads.c.price, ads.c.first_seen_at, ads.c.removed_at)
+            .where(ads.c.token.in_(group), ads.c.token != token)
+            .order_by(ads.c.first_seen_at)
+        ).all()
+        reasons: dict[str, list[str]] = {}
+        for link in cars.links_for(db, group):
+            reasons.setdefault(link.token, []).append(link.reason)
+            reasons.setdefault(link.other, []).append(link.reason)
+        same_car = [
+            {**row._asdict(), "reasons": sorted(set(reasons.get(row.token, [])))} for row in linked
+        ]
+        if linked:
+            # The car's history across all its ads, oldest first.
+            history = db.execute(
+                select(ad_snapshots)
+                .where(ad_snapshots.c.token.in_(group))
+                .order_by(ad_snapshots.c.observed_at, ad_snapshots.c.id)
             ).all()
-            if ad.plate
-            else []
-        )
-    return ad, history, ad_photos, results, chats, same_plate
+    return ad, history, ad_photos, results, chats, same_car
 
 
 def latest_result(results: list, processor: str) -> dict | None:
@@ -253,9 +364,13 @@ def condition_summaries(engine: Engine, tokens: list[str]) -> dict[str, dict]:
     return summaries
 
 
-def _order(sort: str) -> list:
+def _order(sort: str, floor: int = 0) -> list:
     if sort in MULTI_SORTS:
         return [column.asc().nulls_last() for column in MULTI_SORTS[sort]]
+    if sort == "drop":
+        return [_price_drop(floor).desc().nulls_last()]
+    if sort == "drops":
+        return [_drop_count(floor).desc(), _price_drop(floor).desc().nulls_last()]
     return [SORTS.get(sort, SORTS["seen"]).nulls_last()]
 
 
@@ -275,7 +390,11 @@ def ignored_price_floor(engine: Engine) -> int:
 def market_points(
     engine: Engine, manufacturer: str | None, model: str | None, sub_model: str | None = None
 ) -> list:
-    conditions = [ads.c.price.is_not(None), ads.c.price >= ignored_price_floor(engine)]
+    conditions = [
+        ads.c.price.is_not(None),
+        ads.c.price >= ignored_price_floor(engine),
+        _latest_of_car(),
+    ]
     if manufacturer:
         conditions.append(ads.c.manufacturer == manufacturer)
     if model:
@@ -288,6 +407,7 @@ def market_points(
                 ads.c.token, ads.c.title, ads.c.price, ads.c.km, ads.c.year, ads.c.hand,
                 ads.c.manufacturer, ads.c.model, ads.c.sub_model,
                 ads.c.listed_at, ads.c.first_seen_at, ads.c.removed_at,
+                _market_since().label("market_since"),
             ).where(*conditions)
         ).all()
 
@@ -519,3 +639,14 @@ def recent_results(engine: Engine, limit: int = 30, errors_only: bool = False) -
         statement = statement.where(analysis_results.c.status == "error")
     with engine.connect() as db:
         return db.execute(statement).all()
+
+
+def sale_counts(engine: Engine) -> dict[str, int]:
+    """Removed ads with a confirmed plate, by what the registry follow-up concluded."""
+    with engine.connect() as db:
+        rows = db.execute(
+            select(func.coalesce(ads.c.sale_status, "queued"), func.count())
+            .where(ads.c.removed_at.is_not(None), ads.c.plate_status == "confirmed")
+            .group_by(func.coalesce(ads.c.sale_status, "queued"))
+        ).all()
+    return {status: count for status, count in rows}

@@ -42,6 +42,8 @@
 - Models/analysis go in `src/processing/processors/` as `Processor` subclasses; never call them from the scan path
 - Paid processors (Claude) must be `active_only`, record `usage.cost_usd` in their result and raise `Deferred` when `CLAUDE_MONTHLY_BUDGET_USD` is spent
 - A plate is saved on an ad only once the registry confirms it is the same make/model (OCR errors read as real plates of other cars)
+- Dealers (סוחר) are not hands: compare the ad's ownership and hand with the last non-dealer owner in the registry's ownership history (`plates.ownership_summary`); a first registration to a company for under 3 months is the importer, not a hand; time with dealers is reported separately
+- Reposts of one car share `ads.car_id` (token of the group's earliest ad, set only through `storage.cars.link`, reasons in `ad_links`). Dashboard lists show the newest ad per car; days on market, price drops and history span the whole group
 - One-time scans auto-deactivate after completion
 - Bot token loaded from `.env` via `python-dotenv`
 
@@ -71,7 +73,8 @@ src/
   tracking/
     tracker.py               # AdTracker: scan plan, apply scan → new ads / price drops; detect_changes
     photo_archiver.py        # async httpx download of original photos
-    background.py            # BackgroundPipeline: photos then processors, woken after each scan
+    background.py            # BackgroundPipeline: photos, processors, then sale follow-up; woken after each scan
+    sale_watch.py            # removed ads with a plate: registry ownership checked ~12h for a week → sold / not_seen
   processing/
     base.py                  # Processor interface (target "photo" or "ad")
     registry.py              # available processors, PROCESSORS env var
@@ -79,7 +82,9 @@ src/
     plates.py                # plate voting/format, data.gov.il registry lookup, ad vs registry comparison
     processors/photo_info.py # sample processor
     processors/plate_reader.py   # local plate detection + OCR (open-image-models, fast-plate-ocr)
-    processors/plate_registry.py # per-ad plate vote + registry check; writes ads.plate
+    processors/plate_registry.py # per-ad plate vote + registry check + ownership history; writes ads.plate, links same-plate ads
+    processors/photo_hash.py     # perceptual dHash per photo
+    processors/repost_matcher.py # links reposts by shared photos / similar description, vetoed by plate/year/hand/colour/km
     processors/claude_condition.py # Claude Sonnet damage/price-factor check, monthly budget
   dashboard/
     app.py                   # FastAPI app factory (create_app), pages, photo/thumbnail serving

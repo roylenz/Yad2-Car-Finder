@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import json
 import tempfile
 import unittest
@@ -64,12 +65,25 @@ def jpeg(color: str) -> bytes:
     return buffer.getvalue()
 
 
-def registry_transport(records: dict[int, dict], calls: list | None = None) -> httpx.MockTransport:
+HISTORY = [
+    {"mispar_rechev": 13107604, "baalut_dt": 202401, "baalut": "פרטי"},
+    {"mispar_rechev": 13107604, "baalut_dt": 202509, "baalut": "סוחר"},
+]
+
+
+def registry_transport(
+    records: dict[int, dict], calls: list | None = None, histories: dict[int, list] | None = None
+) -> httpx.MockTransport:
+    histories = {13107604: HISTORY} if histories is None else histories
+
     def handle(request: httpx.Request) -> httpx.Response:
         plate = json.loads(request.url.params["filters"])["mispar_rechev"]
-        if calls is not None:
-            calls.append(plate)
-        found = [records[plate]] if plate in records else []
+        if request.url.params["resource_id"] == plates.OWNERSHIP_RESOURCE:
+            found = histories.get(plate, [])
+        else:
+            if calls is not None:
+                calls.append(plate)
+            found = [records[plate]] if plate in records else []
         return httpx.Response(200, json={"success": True, "result": {"records": found}})
 
     return httpx.MockTransport(handle)
@@ -112,9 +126,19 @@ class PlateLogicTests(unittest.TestCase):
             [
                 "Ad says 2025, registry says 2024",
                 "Ad says on the road since 2024-03, registry says 2024-01",
-                "Listed by a private seller, but registered to a dealer",
+                "Advertised by a private seller, but a dealer owns the car now",
                 "Ad says last test 01/2026, registry says 04/01/2024",
             ],
+        )
+        # Dealers are not hands or owners: compare with the last owner before them.
+        leased = limo(FIRST, attributes={"seller_type": "dealer", "ownership": "החכר (ליסינג)", "hand": 1})
+        history = [{"month": "2024-01", "owner": "lease"}, {"month": "2025-06", "owner": "dealer"},
+                   {"month": "2025-08", "owner": "dealer"}]
+        self.assertEqual(plates.compare(leased, RECORD, history)["discrepancies"], [])
+        private = limo(FIRST, attributes={"seller_type": "dealer", "ownership": "פרטית", "hand": 1})
+        self.assertIn(
+            "Ad says private ownership, registry says lease (last owner before dealers)",
+            plates.compare(private, RECORD, history)["discrepancies"],
         )
         nissan = {**RECORD, "tozeret_nm": "ניסאן הודו", "kinuy_mishari": "MICRA", "shnat_yitzur": 2016}
         self.assertFalse(plates.compare(ad, nissan)["same_car"])
@@ -128,6 +152,30 @@ class PlateLogicTests(unittest.TestCase):
         self.assertEqual((found["kinuy_mishari"], found["misgeret"]), ("LIMO", "LJ1234567890"))
         self.assertNotIn("mispar_rechev", found)
         self.assertIsNone(missing)
+
+    def test_ownership_summary_skips_dealers(self):
+        history = [
+            {"month": "2019-03", "owner": "lease"},
+            {"month": "2022-05", "owner": "dealer"},
+            {"month": "2022-07", "owner": "private"},
+            {"month": "2025-09", "owner": "dealer"},
+            {"month": "2026-03", "owner": "dealer"},
+        ]
+        summary = plates.ownership_summary(history, datetime.date(2026, 11, 12))
+        self.assertEqual(summary["hands"], 2)
+        self.assertEqual(summary["last_owner"], "private")
+        self.assertTrue(summary["with_dealer"])
+        self.assertEqual(summary["dealer_since"], "2025-09")
+        self.assertEqual(summary["dealer_months"], 14)
+        self.assertEqual(summary["dealers_in_a_row"], 2)
+        self.assertEqual(summary["dealer_stints"], 2)
+        self.assertFalse(plates.ownership_summary(history[:3])["with_dealer"])
+        # A month registered to a company before the first owner is the importer, not a hand.
+        agency = [{"month": "2024-10", "owner": "company"}, {"month": "2024-11", "owner": "private"}]
+        self.assertEqual(plates.ownership_summary(agency)["hands"], 1)
+        self.assertTrue(plates.ownership_summary(agency)["agency_first"])
+        company = [{"month": "2024-01", "owner": "company"}, {"month": "2025-09", "owner": "private"}]
+        self.assertEqual(plates.ownership_summary(company)["hands"], 2)
 
 
 class StoreTestCase(unittest.TestCase):
@@ -174,12 +222,15 @@ class PlatePipelineTests(StoreTestCase):
 
         web = TestClient(create_app(self.state.engine, self.store, auth.NoAuth()))
         page = web.get("/ads/limo0001").text
-        for expected in ("131-07-604", "Confirmed in the vehicle registry", "registered to a dealer",
-                         "Other ads of this car", "/ads/limo0002", "PREMIUM TECH", "LJ1234567890"):
+        for expected in ("131-07-604", "Confirmed in the vehicle registry", "a dealer owns the car now",
+                         "Same car, other ads", "Same licence plate 131-07-604", "With a dealer since 2025-09",
+                         "1 hand not counting dealers", "/ads/limo0002", "PREMIUM TECH", "LJ1234567890"):
             self.assertIn(expected, page)
         listing = web.get("/ads", params={"q": "131-07-604", "status": "all"}).text
-        self.assertIn("limo0001", listing)
-        self.assertIn("limo0002", listing)
+        # One row per car: the newest ad, marked as a repost.
+        self.assertNotIn("/ads/limo0001", listing)
+        self.assertIn("/ads/limo0002", listing)
+        self.assertIn("Reposted ×1", listing)
 
     def test_ad_waits_for_photo_results_and_rejects_a_different_car(self):
         self.state.ads.record([limo(FIRST, images=(f"{FIRST}/a.jpg",))])

@@ -61,6 +61,17 @@
   <p class="muted" style="margin:8px 0 0">"Waiting" counts targets that are ready now. Ads wait for their photos to download, and the plate check waits until each photo has been read.</p>
 </div>
 
+<h2>Sale follow-up</h2>
+<div class="card">
+  <div class="tiles">
+    <div class="tile"><div class="label">Queued</div><div class="value">{{ sales.get("queued", 0) | number }}</div></div>
+    <div class="tile"><div class="label">Watching</div><div class="value">{{ sales.get("watching", 0) | number }}</div></div>
+    <div class="tile"><div class="label">Sold</div><div class="value">{{ sales.get("sold", 0) | number }}</div></div>
+    <div class="tile"><div class="label">No new owner</div><div class="value">{{ sales.get("not_seen", 0) | number }}</div></div>
+  </div>
+  <p class="muted" style="margin:8px 0 0">Removed ads with a confirmed licence plate are checked in the registry's ownership history about every 12 hours for a week. A new owner from the month of removal on means the car was sold.</p>
+</div>
+
 {% if errors %}
 <h2>Recent errors</h2>
 <div class="card scroll">

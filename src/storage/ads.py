@@ -180,6 +180,9 @@ class AdRepository:
             model=listing.model or old.model,
             listed_at=listing.listed_at or old.listed_at,
         )
+        if old.removed_at is not None:
+            # Back on Yad2: whatever the sale follow-up concluded no longer holds.
+            values.update(sale_status=None, sold_month=None, sold_to=None)
         if listing.detailed:
             values.update(raw=listing.raw, details_fetched_at=now)
         elif old.raw is None:

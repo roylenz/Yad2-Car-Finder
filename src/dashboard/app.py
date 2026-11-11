@@ -222,6 +222,7 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
                 "stale": stale,
                 "processors": queries.processor_statuses(engine, processors),
                 "photos": queries.photo_counts(engine),
+                "sales": queries.sale_counts(engine),
                 "spent": claude.spent_this_month(),
                 "budget": claude.budget,
                 "claude_model": claude.model,
@@ -272,13 +273,15 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
                 else [],
                 "chats": queries.chat_ids(engine),
                 "sorts": {
-                    "seen": "Newest first",
+                    "seen": "Newest on the market",
                     "model": "By model and subtype",
                     "listed": "Longest listed",
                     "price": "Cheapest",
                     "price_desc": "Most expensive",
                     "km": "Lowest mileage",
                     "year": "Newest year",
+                    "drop": "Biggest price drop",
+                    "drops": "Most price drops",
                 },
                 "nav": "ads",
             },
@@ -289,7 +292,7 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
         detail = queries.ad_detail(engine, token)
         if detail is None:
             raise HTTPException(404, "Ad not found")
-        ad, history, ad_photos, results, chats, same_plate = detail
+        ad, history, ad_photos, results, chats, same_car = detail
         price_points = [
             {"t": row.observed_at.isoformat(), "price": row.price}
             for row in history
@@ -306,7 +309,10 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
                 "photos": ad_photos,
                 "results": results,
                 "chats": chats,
-                "same_plate": same_plate,
+                "same_car": same_car,
+                "ownership": ad.ownership or [],
+                "ownership_summary": plates.ownership_summary(ad.ownership) if ad.ownership else None,
+                "owner_labels": plates.OWNER_LABELS,
                 "plate": queries.latest_result(results, "plate_registry"),
                 "condition": queries.latest_result(results, "claude_condition"),
                 "registry_fields": plates.REGISTRY_FIELDS,

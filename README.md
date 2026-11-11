@@ -10,7 +10,11 @@ Telegram bot that scrapes [Yad2](https://www.yad2.co.il/vehicles/cars) for car l
 - **Photo archive** - all photos of every ad are downloaded at Yad2's original size and kept after the ad is gone (stored once even if re-posted)
 - **Accurate price drops** - prices come from the JSON Yad2 embeds in its pages, not from card text, so a "dropped by ₪3,000" badge is never mistaken for the price. Implausible drops (over 50% or under ₪5,000) are logged and not alerted. Prices under 10% of the search's maximum price (₪1 placeholders, monthly lease prices) are archived but not alerted or charted, and are marked "Ignored price" in the ad list
 - **Dashboard** - web pages for an overview, an ad list you can filter by make, model and subtype and sort by model, each ad's photos, details, price chart and change log, and a market view that plots every subtype of a model (or every model) by price plus a price-vs-mileage/year chart; a scans page with each search's next scan time, the running scan's progress and every past scan's result; a background page with what the bot is processing right now (photo downloads, plate reading, registry checks, Claude checks) and its progress, each processor's backlog and failures, Claude spend against the monthly budget, and recent results and errors; public through Cloudflare Tunnel with Cloudflare Access login
-- **Car number per ad** - licence plates are read from the photos on the Pi (local ONNX models, no network) and checked against the Ministry of Transport's vehicle registry on data.gov.il. A confirmed plate is saved on the ad, so other ads of the same car are linked and you can search by plate. The ad page shows the registry record (exact trim, on-road month, last test, ownership, colour, VIN) and where it disagrees with the ad (wrong year, "private" seller whose car is registered to a dealer, ...)
+- **Car number per ad** - licence plates are read from the photos on the Pi (local ONNX models, no network) and checked against the Ministry of Transport's vehicle registry on data.gov.il. A confirmed plate is saved on the ad, so other ads of the same car are linked and you can search by plate. The ad page shows the registry record (exact trim, on-road month, last test, ownership, colour, VIN) and where it disagrees with the ad (wrong year, wrong hand or ownership, "private" seller whose car a dealer now owns, ...). Dealers are not counted as hands: the ad is compared with the last owner before the dealers
+- **Owners and dealer time** - the registry's ownership history (month and owner type) is shown per ad, with how long the car has been with dealers and how many dealers it passed through in a row, which is leverage for a lower offer
+- **Reposts merged** - when a seller takes an ad down and uploads it again, the ads are linked as one car: same confirmed licence plate, 3+ matching photos (perceptual hash), or a matching photo plus a similar description (different plate, year, hand, colour or mileage vetoes a match). Lists show one row per car marked "Reposted ×N", and days on the market, price drops and the change log cover all of its ads
+- **Sale follow-up** - for a week after an ad with a confirmed plate is removed, the registry's ownership history is checked about every 12 hours; a new owner from the month of removal on marks the car as sold (shown on the ad and the Background page)
+- **Sorting** - newest on the market (by the car's first ad), longest listed, biggest price drop (₪ from the first asking price) and most price drops, besides price, mileage, year and model
 - **Condition check with Claude** - when an Anthropic API key is set, Claude Sonnet looks at each active ad's photos and description once and lists visible damage and anything that could lower the price (repairs, wear, warning lights, odometer vs advertised km, photos that do not match the ad), with a monthly spending cap
 - **Pluggable processors** - a small interface for running models over archived ads and photos; results show on the dashboard
 - **Persistent tracking** - searches, alert state and the archive survive container restarts
@@ -137,7 +141,7 @@ scan is due rather than straight away, since back-to-back scans trip Yad2's bot 
 | `HOST_DATA_DIR` | Host folder for the database and photos (Compose) |
 | `DATA_DIR` | Data folder inside the app (default `data`; Compose sets `/app/data`) |
 | `DATABASE_URL` | Optional SQLAlchemy URL, e.g. Postgres on Supabase, instead of SQLite |
-| `PROCESSORS` | Comma-separated processors to run (default: all of `photo_info`, `plate_reader`, `plate_registry`, `claude_condition`) |
+| `PROCESSORS` | Comma-separated processors to run (default: all of `photo_info`, `photo_hash`, `plate_reader`, `plate_registry`, `repost_matcher`, `claude_condition`) |
 | `ANTHROPIC_API_KEY` | Enables `claude_condition`. Use a key created in a Console workspace; Max/Ultra plans include monthly API credits |
 | `CLAUDE_MONTHLY_BUDGET_USD` | Spending cap for `claude_condition` per calendar month (default 20); ads wait for next month once it is reached |
 | `CLAUDE_CONDITION_MODEL` | Model for the condition check (default `claude-sonnet-5-5`) |
@@ -173,7 +177,9 @@ a later pass). The bundled processors:
 | --- | --- | --- |
 | `photo_info` | photo | Image size and format (example) |
 | `plate_reader` | photo | Finds and reads licence plates with local ONNX models |
-| `plate_registry` | ad | Votes on the plate across the ad's photos, confirms it in the data.gov.il registry, saves it on the ad |
+| `photo_hash` | photo | Perceptual hash (dHash) for spotting the same photo in other ads |
+| `plate_registry` | ad | Votes on the plate across the ad's photos, confirms it in the data.gov.il registry, saves it and the ownership history on the ad, links other ads with the same plate |
+| `repost_matcher` | ad | Links reposts of the same car by shared photos and similar descriptions |
 | `claude_condition` | ad | Claude Sonnet inspects photos and description for damage and price factors (one request per active ad, ~3 cents) |
 
 ## Tests

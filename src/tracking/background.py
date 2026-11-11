@@ -1,4 +1,5 @@
-"""Background work after scans: download new photos, then run processors on them."""
+"""Background work after scans: download new photos, run processors on them, then follow up
+removed ads for a sale."""
 
 import asyncio
 import datetime
@@ -12,6 +13,7 @@ from storage.background_status import StatusBoard
 from storage.db import utcnow
 from storage.photos import LocalPhotoStore, PhotoStore
 from tracking.photo_archiver import PhotoArchiver
+from tracking.sale_watch import SaleWatch
 
 
 class BackgroundPipeline:
@@ -21,6 +23,7 @@ class BackgroundPipeline:
         store = store or LocalPhotoStore()
         self.archiver = PhotoArchiver(ads, store)
         self.runner = ProcessingRunner(ads.engine, store, enabled_processors())
+        self.sales = SaleWatch(ads.engine)
         self.idle_seconds = idle_seconds
         self.ads = ads
         self.status = StatusBoard(ads.engine)
@@ -56,11 +59,16 @@ class BackgroundPipeline:
             downloaded += batch
         while not self.busy() and await self.runner.run_pending(paused=self.busy, progress=self._progress):
             pass
+        while not self.busy() and await self.sales.run(busy=self.busy, progress=self._sale_progress):
+            pass
         if self.busy():
             self._report("paused", "Waiting for the running scan to finish")
 
     def _progress(self, processor: str, done: int, waiting: int) -> None:
         self._report("processing", processor, done, waiting)
+
+    def _sale_progress(self, done: int, total: int) -> None:
+        self._report("processing", "Sale follow-up (registry owners)", done, total)
 
     def _report(self, state: str, detail: str | None = None, done: int | None = None,
                 total: int | None = None, next_run_at: datetime.datetime | None = None) -> None:

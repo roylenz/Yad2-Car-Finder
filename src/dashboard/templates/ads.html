@@ -81,7 +81,9 @@
           {% if check %}
           <span class="badge{{ ' removed' if check.high_impact or check.condition == 'poor' else '' }}" title="Claude condition check: {{ check.damage }} damage item(s), {{ check.issues }} price factor(s)">{{ check.condition | capitalize }}{% if check.issues %} · {{ check.issues }} issue{{ "s" if check.issues != 1 }}{% endif %}</span>
           {% endif %}
+          {% if ad.reposts %}<span class="badge" title="The same car was advertised in {{ ad.reposts }} other ad{{ 's' if ad.reposts != 1 }}; days listed count from the first">Reposted ×{{ ad.reposts }}</span>{% endif %}
           {% if ad.removed_at %}<span class="badge removed">Removed {{ ad.removed_at | when }}</span>{% endif %}
+          {% if ad.sale_status == "sold" %}<span class="badge ok" title="A new owner appeared in the registry after the ad was removed">Sold {{ ad.sold_month or "" }}</span>{% endif %}
         </td>
         <td class="num">{{ ad.year or "—" }}</td>
         <td class="num hide-sm">{{ ad.km | number }}</td>
@@ -91,8 +93,8 @@
           {% if ad.price is not none and ad.price < price_floor %}
           <div><span class="badge" title="Under 10% of the search's max price: a placeholder or monthly lease price. Not alerted or charted.">Ignored price</span></div>
           {% endif %}
-          {% if ad.first_price and ad.price and ad.price < ad.first_price %}
-          <div><span class="badge drop">▼ {{ (ad.first_price - ad.price) | shekels }}</span></div>
+          {% if ad.price_drop and ad.price_drop > 0 %}
+          <div><span class="badge drop" title="Down from the first asking price{{ ', across reposts' if ad.reposts }}; lowered {{ ad.drops }} time{{ 's' if ad.drops != 1 }}">▼ {{ ad.price_drop | shekels }}{% if ad.drops %} · {{ ad.drops }}×{% endif %}</span></div>
           {% endif %}
         </td>
         <td class="num">{{ days_listed(ad) }}</td>

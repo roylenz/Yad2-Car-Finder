@@ -104,7 +104,27 @@ ads = Table(
     # Licence plate read from the photos (processing/processors/plate_registry.py).
     Column("plate", String(8)),
     Column("plate_status", String(16)),  # "confirmed" (found in the registry) or "unverified"
+    # Reposts of the same car share a car_id (the token of the group's first ad); see ad_links.
+    Column("car_id", String(32)),
+    # Ministry of Transport ownership history: [{"month": "2024-12", "owner": "פרטי"}, ...]
+    Column("ownership", JSON),
+    Column("ownership_checked_at", DateTime),
+    # After removal, the registry is checked for a week: "watching", "sold" or "not_seen".
+    Column("sale_status", String(16)),
+    Column("sold_month", String(7)),  # month of the ownership change that confirms the sale
+    Column("sold_to", Text),  # new owner type
     Index("ix_ads_plate", "plate"),
+    Index("ix_ads_car_id", "car_id"),
+)
+
+# Why two ads were judged to be the same car (reposts).
+ad_links = Table(
+    "ad_links",
+    metadata,
+    Column("token", String(32), ForeignKey("ads.token"), primary_key=True),
+    Column("other", String(32), ForeignKey("ads.token"), primary_key=True),
+    Column("reason", Text, nullable=False),
+    Column("created_at", DateTime, nullable=False),
 )
 
 # Price and parameter history. A row is written only when something changes.

@@ -9,16 +9,20 @@ import os
 from common.logger import logger
 from processing.base import Processor
 from processing.processors.claude_condition import ClaudeConditionProcessor
+from processing.processors.photo_hash import PhotoHashProcessor
 from processing.processors.photo_info import PhotoInfoProcessor
 from processing.processors.plate_reader import PlateReaderProcessor
 from processing.processors.plate_registry import PlateRegistryProcessor
+from processing.processors.repost_matcher import RepostMatcherProcessor
 
 AVAILABLE: dict[str, type[Processor]] = {
     processor.name: processor
     for processor in (
         PhotoInfoProcessor,
+        PhotoHashProcessor,
         PlateReaderProcessor,
         PlateRegistryProcessor,
+        RepostMatcherProcessor,
         ClaudeConditionProcessor,
     )
 }
