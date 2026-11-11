@@ -181,7 +181,8 @@ def listing_from_json(ad: dict, detailed: bool = False) -> CarListing:
     hand = ad.get("hand")
     return CarListing(
         url=ITEM_URL.format(token=ad["token"]),
-        title=" ".join(part for part in (manufacturer, model) if part) or "Car listing",
+        title=" ".join(" ".join(part for part in (manufacturer, model) if part).split())
+        or "Car listing",
         price=_int(ad.get("price")),
         km=km,
         hand=_int(hand.get("id")) if isinstance(hand, dict) else _int(hand),

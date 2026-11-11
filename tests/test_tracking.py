@@ -202,6 +202,15 @@ class TrackerTests(TempStateTestCase):
             history = db.execute(select(ad_snapshots.c.price, ad_snapshots.c.changes)).all()
         self.assertEqual([(row.price, row.changes) for row in history], [(100000, None)])
 
+    def test_title_spacing_is_not_a_change(self):
+        tracker = AdTracker(self.state.ads)
+        self.state.set_search(1, SEARCH, 10)
+        tracker.apply(1, ScanOutput([CarListing(URL, "אי.וי איזי Limo", 90000)]))
+        tracker.apply(1, ScanOutput([CarListing(URL, "אי.וי איזי  Limo", 90000)]))
+        with self.state.engine.connect() as db:
+            history = db.execute(select(ad_snapshots.c.changes)).scalars().all()
+        self.assertEqual(history, [None])
+
     def test_big_drop_badge_does_not_alert(self):
         # 200,000 -> 90,000: the badge (110,000) is above the new price and looked like a drop.
         tracker = AdTracker(self.state.ads)

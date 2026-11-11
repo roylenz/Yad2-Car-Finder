@@ -163,6 +163,8 @@ class AdRepository:
             values[name] = new_value
             if name == "price" and is_badge_price(old_value, listing):
                 continue
+            if name == "title" and old_value and " ".join(old_value.split()) == " ".join(new_value.split()):
+                continue  # only spacing differs between Yad2's card and JSON titles
             if old_value is not None and new_value != old_value:
                 changes[name] = [old_value, new_value]
         old_attributes = old.attributes or {}
