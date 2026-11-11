@@ -188,6 +188,28 @@ class TrackerTests(TempStateTestCase):
         self.assertIn("removed", history[2].changes)
         self.assertIn("relisted", history[3].changes)
 
+    def test_badge_price_from_old_scraper_is_corrected_silently(self):
+        # Smart EQ ForFour: Yad2 shows 150,000 -> 100,000; the old scraper saved the 50,000 badge.
+        tracker = AdTracker(self.state.ads)
+        self.state.set_search(1, SEARCH, 10)
+        tracker.apply(1, ScanOutput([CarListing(URL, "Car", 50000)]))
+        real = CarListing(URL, "Car", 100000, attributes={"price_before": 150000})
+        result = tracker.apply(1, ScanOutput([real]))
+        self.assertEqual((result.new, result.drops), ([], []))
+        self.assertEqual(self.state.ads.get("6rg1e7dp").price, 100000)
+        self.assertEqual(self.state.previous_listings(1)[URL].price, 100000)
+        with self.state.engine.connect() as db:
+            history = db.execute(select(ad_snapshots.c.price, ad_snapshots.c.changes)).all()
+        self.assertEqual([(row.price, row.changes) for row in history], [(100000, None)])
+
+    def test_big_drop_badge_does_not_alert(self):
+        # 200,000 -> 90,000: the badge (110,000) is above the new price and looked like a drop.
+        tracker = AdTracker(self.state.ads)
+        self.state.set_search(1, SEARCH, 10)
+        tracker.apply(1, ScanOutput([CarListing(URL, "Car", 110000)]))
+        real = CarListing(URL, "Car", 90000, attributes={"price_before": 200000})
+        self.assertEqual(tracker.apply(1, ScanOutput([real])).drops, [])
+
     def test_ads_left_out_of_results_are_not_rechecked(self):
         tracker = AdTracker(self.state.ads)
         self.state.set_search(1, SEARCH, 10)

@@ -17,6 +17,22 @@ _VOLATILE_ATTRIBUTES = {
 _TRACKED_FIELDS = ("price", "km", "hand", "year", "title", "sub_model")
 
 
+def is_badge_price(stored_price: int | None, listing: CarListing) -> bool:
+    """True when a stored price is really Yad2's "dropped by" badge amount for this listing.
+
+    The old card scraper read the badge (price before the drop minus the current price)
+    as the price. The feed JSON gives both numbers, so such values can be recognised exactly.
+    """
+    price_before = listing.attributes.get("price_before")
+    return (
+        stored_price is not None
+        and listing.price is not None
+        and isinstance(price_before, int)
+        and stored_price == price_before - listing.price
+        and stored_price != listing.price
+    )
+
+
 def _listing_from_row(row, price: int | None = None) -> CarListing:
     return CarListing(
         url=row.url,
@@ -125,12 +141,28 @@ class AdRepository:
     def _update(db, old, listing: CarListing, now: datetime.datetime) -> None:
         changes = {}
         values = {}
+        if is_badge_price(old.price, listing):
+            # Saved by the old card scraper from the price-drop badge: correct it everywhere
+            # without recording a price change.
+            db.execute(
+                update(ad_snapshots)
+                .where(ad_snapshots.c.token == old.token, ad_snapshots.c.price == old.price)
+                .values(price=listing.price)
+            )
+            db.execute(
+                update(chat_ads)
+                .where(chat_ads.c.token == old.token, chat_ads.c.last_price == old.price)
+                .values(last_price=listing.price)
+            )
+            values["price"] = listing.price
         for name in _TRACKED_FIELDS:
             new_value = getattr(listing, name)
             old_value = getattr(old, name)
             if new_value is None:
                 continue
             values[name] = new_value
+            if name == "price" and is_badge_price(old_value, listing):
+                continue
             if old_value is not None and new_value != old_value:
                 changes[name] = [old_value, new_value]
         old_attributes = old.attributes or {}

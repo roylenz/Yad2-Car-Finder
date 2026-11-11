@@ -5,7 +5,7 @@ from dataclasses import dataclass, field, replace
 
 from car.listing import CarListing, ScanOutput, ScanPlan
 from common.logger import logger
-from storage.ads import AdRepository
+from storage.ads import AdRepository, is_badge_price
 
 # A "drop" below these is almost certainly a parsing error, not a real price.
 MIN_PLAUSIBLE_PRICE = 5000
@@ -33,6 +33,8 @@ def detect_changes(
         if old is None:
             new.append(listing)
         elif old.price is not None and listing.price is not None and listing.price < old.price:
+            if is_badge_price(old.price, listing):
+                continue  # the stored "price" was the old scraper's badge amount
             if not is_plausible_drop(old.price, listing.price):
                 logger.warning(
                     "Ignoring implausible price drop",
