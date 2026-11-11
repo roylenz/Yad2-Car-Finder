@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+import unittest.mock
 from unittest.mock import AsyncMock
 
 from bot.scanner import detect_changes, format_listing
@@ -13,13 +14,79 @@ from bot.scanner import Scanner
 from bot.menu import ADMIN_COMMANDS, USER_COMMANDS
 from telegram.ext import ApplicationHandlerStop
 from car.car_finder import Yad2CarFinder
-from car.listing import CarListing
-from car.search_url import normalize_search_url
+from car.listing import CarListing, KnownAd, ScanPlan
+from car.search_url import normalize_search_url, price_range, split_price, with_price
 
 EXAMPLE_URL = (
     "https://www.yad2.co.il/vehicles/cars?manufacturer=334&model=13190"
     "&year=2023--1&price=-1-90000&km=-1-50000"
 )
+
+
+class FakeFinder(Yad2CarFinder):
+    """Serves a fixed set of ads by price, `per_page` at a time, without a browser."""
+
+    def __init__(self, prices: dict[str, int], per_page: int = 40) -> None:
+        self.prices, self.per_page, self.loaded = prices, per_page, []
+
+    async def _load_results_page(self, tab, url):
+        self.loaded.append(url)
+        tab.url = url
+        return True
+
+    async def _collect_pages(self, tab, search_url, max_pages, listings, report):
+        raise AssertionError("price slices should fit on one page")
+
+    async def fetch(self, tab, listings, feed=None):
+        bounds = price_range(tab.url)
+        matching = sorted(token for token, price in self.prices.items() if bounds[0] <= price <= bounds[1])
+        for token in matching[: self.per_page]:
+            url = f"https://www.yad2.co.il/vehicles/item/{token}"
+            listings[url] = CarListing(url, token, self.prices[token])
+        if feed is not None:
+            feed["total"] = len(matching)
+        return max(-(-len(matching) // self.per_page), 1)
+
+
+class PriceSliceTests(unittest.TestCase):
+    def test_price_range_and_slices(self):
+        self.assertEqual(price_range(EXAMPLE_URL), (-1, 90000))
+        self.assertEqual(price_range("https://www.yad2.co.il/vehicles/cars?price=1-100000"), (1, 100000))
+        self.assertIsNone(price_range("https://www.yad2.co.il/vehicles/cars?price=50000--1"))
+        self.assertIsNone(price_range("https://www.yad2.co.il/vehicles/cars?year=2023--1"))
+        self.assertEqual(
+            with_price(EXAMPLE_URL + "&page=2", -1, 45000),
+            EXAMPLE_URL.replace("price=-1-90000", "price=-1-45000"),
+        )
+        self.assertEqual(split_price(1, 100000, [90000, 95000, 80000, 200]), [(1, 80000), (80001, 100000)])
+        self.assertEqual(split_price(1, 100, []), [(1, 50), (51, 100)])
+        self.assertEqual(split_price(10, 11, [11]), [(10, 10), (11, 11)])
+        self.assertEqual(split_price(1, 100, [10, 20, 30, 40, 50, 60], 3), [(1, 20), (21, 40), (41, 100)])
+
+    def test_every_ad_is_collected_through_price_slices(self):
+        prices = {f"ad{n:03d}": 60000 + n * 300 for n in range(95)}
+        finder = FakeFinder(prices)
+        tab = SimpleNamespace(url=None)
+        listings = {}
+        url = "https://www.yad2.co.il/vehicles/cars?price=1-100000&km=-1-40000"
+        # Prices known from earlier scans place the cuts; a few new ads are not known yet.
+        plan = ScanPlan(known={f"https://www.yad2.co.il/vehicles/item/{token}": KnownAd(price, None)
+                               for token, price in list(prices.items())[:85]})
+        with unittest.mock.patch.object(Yad2CarFinder, "_fetch_page_results", staticmethod(finder.fetch)):
+            asyncio.run(finder._collect_by_price(
+                tab, url, (1, 100000), listings, plan, lambda _text: None, {"total": 95, "per_page": 40}
+            ))
+        self.assertEqual(len(listings), 95)
+        self.assertEqual(len(finder.loaded), 4)
+        # Nothing known: equal-width cuts still get everything, with a few more loads.
+        finder, listings = FakeFinder(prices), {}
+        with unittest.mock.patch.object(Yad2CarFinder, "_fetch_page_results", staticmethod(finder.fetch)):
+            asyncio.run(finder._collect_by_price(
+                tab, url, (1, 100000), listings, ScanPlan(), lambda _text: None, {"total": 95, "per_page": 40}
+            ))
+        self.assertEqual(len(listings), 95)
+        self.assertLessEqual(len(finder.loaded), 8)
+        self.assertTrue(all("km=-1-40000" in loaded for loaded in finder.loaded))
 
 
 class SearchUrlTests(unittest.TestCase):

@@ -52,6 +52,12 @@ def feed_total(next_data: dict) -> int | None:
     return int(total) if isinstance(total, int | str) and str(total).isdigit() else None
 
 
+def feed_per_page(next_data: dict) -> int | None:
+    pagination = (feed_data(next_data) or {}).get("pagination") or {}
+    per_page = pagination.get("perPage")
+    return int(per_page) if isinstance(per_page, int) and per_page > 0 else None
+
+
 def unknown_feed_groups(next_data: dict) -> list[str]:
     """Lists of ads in the feed that `feed_ads` does not read (a new Yad2 layout would hide ads)."""
     data = feed_data(next_data) or {}

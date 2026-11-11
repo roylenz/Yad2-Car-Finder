@@ -120,6 +120,7 @@ src/
   - `yad2_json.listing_from_json` maps known fields to snake_case `attributes`; unknown top-level fields are kept automatically; never store `customer` (seller identity)
   - `metaData.images` are originals on `img.yad2.co.il` (`/o/` path), downloadable with plain HTTP; pages themselves need the browser (bot protection)
   - Times are Israel local time; store naive UTC
+- Don't page through results: Yad2 A/B-tests two feed layouts (`feed`: commercial+private; `feed-mix`: `ads`) that order ads differently, and serves page 2 in either, so `page=2` repeats some ads and skips others. A search with more than one page is split into price slices that each fit on one page (`Yad2CarFinder._collect_by_price`); a scan logs a warning when it collects fewer results than the feed's `pagination.total`
 - Price-drop cards have two `[data-testid=price]` elements; the first is the "ירד ב ..." badge (DOM fallback skips it)
 - Background work (photo downloads, processors) pauses while a scan runs (`BackgroundPipeline.busy = Scanner.is_scanning`): a CPU-starved browser or mid-scan image traffic also trips the bot check. Plate models use `PLATE_THREADS` (default 2) cores
 - Back-to-back scans from the same IP trip Yad2's bot check: on restart, restored searches keep their rhythm (first scan when the next regular one is due, `bot.scanner.first_delay`), never immediately

@@ -18,6 +18,7 @@ Telegram bot that scrapes [Yad2](https://www.yad2.co.il/vehicles/cars) for car l
 - **Condition check with Claude** - when an Anthropic API key is set, Claude Sonnet looks at each active ad's photos and description once and lists visible damage and anything that could lower the price (repairs, wear, warning lights, odometer vs advertised km, photos that do not match the ad), with a monthly spending cap
 - **Pluggable processors** - a small interface for running models over archived ads and photos; results show on the dashboard
 - **Persistent tracking** - searches, alert state and the archive survive container restarts
+- **Every result, not just the first page** - Yad2 serves result pages in two layouts that order ads differently, so paging skips some ads. A search with more results than fit on one page is split into price ranges that each fit on one page, and the scan warns if it still collects fewer ads than Yad2 reports
 - **Bounded concurrent scans** - a shared queue runs at most `MAX_CONCURRENT_SCANS` browser scans at once (default 2)
 - **Private access** - users request access with their name; admins approve requests and can promote other admins
 - **Structured logging** - colored console output with structured JSON kwargs, configurable log level via `LOG_LEVEL` env var

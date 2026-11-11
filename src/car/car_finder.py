@@ -13,7 +13,7 @@ import nodriver as uc
 from nodriver.core.connection import ProtocolException
 from car import yad2_json
 from car.listing import CarListing, ScanOutput, ScanPlan
-from car.search_url import BASE_URL
+from car.search_url import BASE_URL, price_range, split_price, with_price
 from common.exceptions import CustomException, ErrorCode
 from common.logger import logger
 
@@ -162,6 +162,7 @@ class Yad2CarFinder:
         if ads:
             if feed is not None and feed.get("total") is None:
                 feed["total"] = yad2_json.feed_total(next_data)
+                feed["per_page"] = yad2_json.feed_per_page(next_data)
             unknown = yad2_json.unknown_feed_groups(next_data)
             if unknown:
                 logger.warning("Feed has ad lists the parser skips", groups=unknown)
@@ -327,6 +328,8 @@ class Yad2CarFinder:
         stale.sort(key=lambda item: plan.known[item.url].details_fetched_at)
         return urgent + stale[: plan.max_refresh]
 
+    _MAX_PRICE_SLICES = 12  # page loads per scan when splitting a search by price
+
     async def _load_results_page(self, tab: uc.Tab, url: str) -> bool:
         await Yad2CarFinder._pause(Yad2CarFinder._PAGE_PAUSE_IN_SECONDS)
         logger.info("Loading page", url=url)
@@ -338,6 +341,56 @@ class Yad2CarFinder:
             Yad2CarFinder._CAPTCHA_TIMEOUT_IN_SECONDS,
             Yad2CarFinder._POLL_INTERVAL_IN_SECONDS,
         )
+
+    async def _collect_pages(
+        self, tab: uc.Tab, search_url: str, max_pages: int,
+        listings: dict[str, CarListing], report: Callable[[str], None],
+    ) -> None:
+        separator = "&" if "?" in search_url else "?"
+        for page_number in range(2, max_pages + 1):
+            report(f"Results page {page_number}/{max_pages}")
+            page_url = f"{search_url}{separator}page={page_number}"
+            if not await self._load_results_page(tab, page_url):
+                break
+            await Yad2CarFinder._fetch_page_results(tab, listings)
+            logger.info("Page scraped", page=f"{page_number}/{max_pages}", total_results=len(listings))
+
+    async def _collect_by_price(
+        self, tab: uc.Tab, search_url: str, bounds: tuple[int, int],
+        listings: dict[str, CarListing], plan: ScanPlan, report: Callable[[str], None],
+        first_page: dict,
+    ) -> None:
+        def known_prices() -> list[int]:
+            # Prices seen before and in this scan so far: cut where the ads actually are.
+            return [ad.price for ad in plan.known.values() if ad.price] + [
+                listing.price for listing in listings.values() if listing.price
+            ]
+
+        def slices(low: int, high: int, total: int, per_page: int) -> list[tuple[int, int]]:
+            # Aim for slices about 3/4 full, so a few new ads don't spill onto a second page.
+            parts = -(-total * 4 // (per_page * 3))
+            return split_price(low, high, known_prices(), parts)
+
+        per_page = first_page.get("per_page") or 40
+        pending = slices(*bounds, first_page["total"], per_page)
+        loads = 0
+        while pending and loads < self._MAX_PRICE_SLICES:
+            low, high = pending.pop(0)
+            loads += 1
+            report(f"Results {low:,}-{high:,} ₪ ({len(listings)} so far)")
+            if not await self._load_results_page(tab, with_price(search_url, low, high)):
+                break
+            feed: dict = {}
+            pages = await Yad2CarFinder._fetch_page_results(tab, listings, feed)
+            logger.info(
+                "Price slice scraped", prices=f"{low}-{high}", slice_total=feed.get("total"),
+                pages=pages, total_results=len(listings),
+            )
+            if pages > 1:
+                if high - low > 1 and feed.get("total"):
+                    pending[:0] = slices(low, high, feed["total"], feed.get("per_page") or per_page)
+                else:
+                    await self._collect_pages(tab, with_price(search_url, low, high), pages, listings, report)
 
     async def find(
         self,
@@ -380,18 +433,14 @@ class Yad2CarFinder:
                 if max_pages == 0:
                     max_pages = await Yad2CarFinder._dom_page_count(tab)
                 logger.info("Page scraped", page=f"1/{max_pages}", total_results=len(listings))
-                separator = "&" if "?" in search_url else "?"
-                for page_number in range(2, max_pages + 1):
-                    report(f"Results page {page_number}/{max_pages}")
-                    page_url = f"{search_url}{separator}page={page_number}"
-                    if not await self._load_results_page(tab, page_url):
-                        break
-                    await Yad2CarFinder._fetch_page_results(tab, listings)
-                    logger.info(
-                        "Page scraped",
-                        page=f"{page_number}/{max_pages}",
-                        total_results=len(listings),
-                    )
+                bounds = price_range(search_url)
+                if max_pages > 1 and bounds and feed.get("total"):
+                    # Yad2 serves each page in one of two layouts (A/B test) that order ads
+                    # differently, so page 2 repeats some of page 1 and skips others. Instead,
+                    # split the price range into slices that each fit on one page.
+                    await self._collect_by_price(tab, search_url, bounds, listings, plan, report, feed)
+                else:
+                    await self._collect_pages(tab, search_url, max_pages, listings, report)
                 if feed.get("total") and len(listings) < feed["total"]:
                     logger.warning(
                         "Fewer results than Yad2 reports",
