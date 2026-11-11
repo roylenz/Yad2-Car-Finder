@@ -165,9 +165,18 @@ class Yad2CarFinder:
             unknown = yad2_json.unknown_feed_groups(next_data)
             if unknown:
                 logger.warning("Feed has ad lists the parser skips", groups=unknown)
+            before = len(listings)
             for ad in ads:
                 listing = yad2_json.listing_from_json(ad)
                 listings[listing.url] = listing
+            data = yad2_json.feed_data(next_data) or {}
+            logger.info(
+                "Feed page",
+                groups={key: len(value) for key, value in data.items() if isinstance(value, list)},
+                pagination=data.get("pagination"),
+                new=len(listings) - before,
+                repeated=len(ads) - (len(listings) - before),
+            )
             return yad2_json.feed_pages(next_data)
         logger.warning("Feed JSON not found, reading result cards instead")
         await Yad2CarFinder._scroll_to_results_feed(tab)
