@@ -180,7 +180,9 @@ class Scanner:
             output = await asyncio.to_thread(_run_scraper_sync, url, plan)
             logger.info("Scan completed", chat_id=chat_id, results_count=len(output.listings))
         except CustomException as error:
-            logger.error("Scan failed", chat_id=chat_id, error_code=error.error_code, message=error.message)
+            logger.error(
+                "Scan failed", chat_id=chat_id, error_code=int(error.error_code), reason=error.message
+            )
             await self._send_safe(context, chat_id, f"⚠️ Scan failed: {error.message}")
             return
         except Exception as error:

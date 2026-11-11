@@ -310,5 +310,26 @@ class ProcessingTests(TempStateTestCase):
         self.assertEqual((row.status, row.attempts), ("error", 3))
 
 
+
+class ScanFailureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_failed_scan_reports_reason_to_chat(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, patch
+
+        from bot.scanner import Scanner
+        from common.exceptions import CustomException, ErrorCode
+
+        with tempfile.TemporaryDirectory() as directory:
+            state = BotState(str(Path(directory) / "bot.sqlite3"))
+            state.set_search(1, SEARCH, 10)
+            scanner = Scanner(state)
+            context = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
+            error = CustomException("Yad2 requested browser validation", ErrorCode.CAPTCHA_TIMEOUT)
+            with patch("bot.scanner._run_scraper_sync", side_effect=error):
+                await scanner._run_scan(context, 1, SEARCH, False)
+            text = context.bot.send_message.await_args.args[1]
+            self.assertIn("Yad2 requested browser validation", text)
+
+
 if __name__ == "__main__":
     unittest.main()

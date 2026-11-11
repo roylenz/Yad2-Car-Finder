@@ -1,6 +1,8 @@
+import asyncio
 import datetime
 import json
 import os
+import random
 import re
 import time
 from dataclasses import replace
@@ -26,6 +28,13 @@ class Yad2CarFinder:
     _PAGE_LOAD_TIMEOUT_IN_SECONDS = 15
     _CAPTCHA_TIMEOUT_IN_SECONDS = 120
     _POLL_INTERVAL_IN_SECONDS = 1
+    # Randomised pauses between page loads; loading pages back to back triggers Yad2's bot check.
+    _PAGE_PAUSE_IN_SECONDS = (2.5, 5.0)
+    _ITEM_PAUSE_IN_SECONDS = (1.5, 3.5)
+
+    @staticmethod
+    async def _pause(bounds: tuple[float, float]) -> None:
+        await asyncio.sleep(random.uniform(*bounds))
 
     _RESULTS_FEED_SELECTOR = (
         "a[data-nagish='private-item-link'], "
@@ -216,6 +225,7 @@ class Yad2CarFinder:
     async def _fetch_details(tab: uc.Tab, listing: CarListing) -> CarListing | None:
         """Read the full ad from its page. Return None when Yad2 no longer has the ad."""
         try:
+            await Yad2CarFinder._pause(Yad2CarFinder._ITEM_PAUSE_IN_SECONDS)
             await tab.get(listing.url)
             for _ in range(20):
                 if urlsplit(tab.url).hostname != "www.yad2.co.il":
@@ -298,6 +308,7 @@ class Yad2CarFinder:
         return urgent + stale[: plan.max_refresh]
 
     async def _load_results_page(self, tab: uc.Tab, url: str) -> bool:
+        await Yad2CarFinder._pause(Yad2CarFinder._PAGE_PAUSE_IN_SECONDS)
         logger.info("Loading page", url=url)
         await tab.get(url)
         await tab.sleep(Yad2CarFinder._FETCHING_INTERVAL_IN_SECONDS)
