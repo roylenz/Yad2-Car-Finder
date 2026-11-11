@@ -45,6 +45,23 @@ def feed_ads(next_data: dict) -> list[dict]:
     return ads
 
 
+def feed_total(next_data: dict) -> int | None:
+    """How many results Yad2 says the search has (all pages)."""
+    pagination = (feed_data(next_data) or {}).get("pagination") or {}
+    total = pagination.get("total")
+    return int(total) if isinstance(total, int | str) and str(total).isdigit() else None
+
+
+def unknown_feed_groups(next_data: dict) -> list[str]:
+    """Lists of ads in the feed that `feed_ads` does not read (a new Yad2 layout would hide ads)."""
+    data = feed_data(next_data) or {}
+    return sorted(
+        key for key, value in data.items()
+        if key not in _FEED_GROUPS and isinstance(value, list)
+        and any(isinstance(item, dict) and item.get("token") for item in value)
+    )
+
+
 def feed_pages(next_data: dict) -> int:
     pagination = (feed_data(next_data) or {}).get("pagination") or {}
     return int(pagination.get("pages") or 1)

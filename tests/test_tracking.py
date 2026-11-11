@@ -67,6 +67,14 @@ class Yad2JsonTests(unittest.TestCase):
         self.assertEqual(car.listed_at, datetime.datetime(2026, 11, 9, 13, 48, 38))
         self.assertEqual(yad2_json.feed_pages(next_data), 3)
 
+    def test_feed_total_and_unknown_groups(self):
+        data = fixture("feed_next_data.json")
+        self.assertEqual(yad2_json.feed_total(data), 81)
+        self.assertEqual(yad2_json.unknown_feed_groups(data), [])
+        feed = yad2_json.feed_data(data)
+        feed["sponsored"] = [{"token": "new00001"}]
+        self.assertEqual(yad2_json.unknown_feed_groups(data), ["sponsored"])
+
     def test_older_feed_layout_is_read_too(self):
         next_data = fixture("feed_next_data.json")
         query = next_data["props"]["pageProps"]["dehydratedState"]["queries"][0]

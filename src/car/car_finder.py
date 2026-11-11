@@ -150,11 +150,21 @@ class Yad2CarFinder:
             return None
 
     @staticmethod
-    async def _fetch_page_results(tab: uc.Tab, listings: dict[str, CarListing]) -> int:
-        """Collect the page's results; return the page count Yad2 reports (1 if unknown)."""
+    async def _fetch_page_results(
+        tab: uc.Tab, listings: dict[str, CarListing], feed: dict | None = None
+    ) -> int:
+        """Collect the page's results; return the page count Yad2 reports (1 if unknown).
+
+        `feed` receives Yad2's total result count, to check that no results were missed.
+        """
         next_data = await Yad2CarFinder._read_next_data(tab)
         ads = yad2_json.feed_ads(next_data) if next_data else []
         if ads:
+            if feed is not None and feed.get("total") is None:
+                feed["total"] = yad2_json.feed_total(next_data)
+            unknown = yad2_json.unknown_feed_groups(next_data)
+            if unknown:
+                logger.warning("Feed has ad lists the parser skips", groups=unknown)
             for ad in ads:
                 listing = yad2_json.listing_from_json(ad)
                 listings[listing.url] = listing
@@ -354,9 +364,10 @@ class Yad2CarFinder:
             )
 
             listings: dict[str, CarListing] = {}
+            feed: dict = {}
             report("Results page 1")
             if has_results:
-                max_pages = await Yad2CarFinder._fetch_page_results(tab, listings)
+                max_pages = await Yad2CarFinder._fetch_page_results(tab, listings, feed)
                 if max_pages == 0:
                     max_pages = await Yad2CarFinder._dom_page_count(tab)
                 logger.info("Page scraped", page=f"1/{max_pages}", total_results=len(listings))
@@ -371,6 +382,12 @@ class Yad2CarFinder:
                         "Page scraped",
                         page=f"{page_number}/{max_pages}",
                         total_results=len(listings),
+                    )
+                if feed.get("total") and len(listings) < feed["total"]:
+                    logger.warning(
+                        "Fewer results than Yad2 reports",
+                        collected=len(listings),
+                        yad2_total=feed["total"],
                     )
 
             to_fetch = Yad2CarFinder._needs_details(list(listings.values()), plan)
