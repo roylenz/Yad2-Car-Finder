@@ -42,6 +42,9 @@ from tracking.background import BackgroundPipeline
 
 async def restore_searches(app: Application) -> None:
     await configure_menu(app.bot, app.bot_data["access"].admin_ids())
+    interrupted = scanner.scan_log.interrupt_unfinished()
+    if interrupted:
+        logger.info("Marked scans interrupted by the restart", count=interrupted)
     scanner.start_workers()
     pipeline = BackgroundPipeline(scanner.state.ads)
     scanner.on_scan_complete = pipeline.wake

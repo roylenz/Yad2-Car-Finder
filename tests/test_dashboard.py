@@ -65,6 +65,34 @@ class DashboardTests(unittest.TestCase):
                 self.assertIn(expected, response.text)
         self.assertEqual(self.client.get("/ads/missing").status_code, 404)
 
+    def test_scans_page_shows_next_scan_progress_and_history(self):
+        from storage.db import utcnow
+        from storage.scans import ScanLog
+
+        self.state.set_search(1, "https://www.yad2.co.il/vehicles/cars?x=1", 10)
+        log = ScanLog(self.state.engine)
+        done = log.queued(1, "https://www.yad2.co.il/vehicles/cars?x=1")
+        log.started(done)
+        log.finished(done, results=84, new_ads=3, price_drops=1, removed=2, details_fetched=12)
+        broken = log.queued(1, "https://www.yad2.co.il/vehicles/cars?x=1")
+        log.started(broken)
+        log.failed(broken, "Yad2 asked for validation")
+        running = log.queued(1, "https://www.yad2.co.il/vehicles/cars?x=1")
+        log.started(running)
+        log.progress(running, "Ad pages 5/40 (84 results)")
+        log.set_next(1, utcnow() + datetime.timedelta(minutes=7))
+
+        page = self.client.get("/scans").text
+        for expected in ("Ad pages 5/40", "Yad2 asked for validation", "in 7 min", ">84<", "Scanning"):
+            self.assertIn(expected, page)
+        self.assertIn("Ad pages 5/40", self.client.get("/").text)
+        self.assertIn("in 7 min", self.client.get("/").text)
+
+        self.assertEqual(log.interrupt_unfinished(), 1)
+        page = self.client.get("/scans?chat=1").text
+        self.assertIn("Bot restarted before the scan finished", page)
+        self.assertNotIn("Scanning", page)
+
     def test_ad_page_shows_test_and_registration_details(self):
         text = self.client.get("/ads/6rg1e7dp").text
         for expected in (

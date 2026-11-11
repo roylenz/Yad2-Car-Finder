@@ -5,6 +5,7 @@ import os
 import random
 import re
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from urllib.parse import urljoin, urlsplit
 
@@ -319,8 +320,14 @@ class Yad2CarFinder:
             Yad2CarFinder._POLL_INTERVAL_IN_SECONDS,
         )
 
-    async def find(self, search_url: str, plan: ScanPlan | None = None) -> ScanOutput:
+    async def find(
+        self,
+        search_url: str,
+        plan: ScanPlan | None = None,
+        progress: Callable[[str], None] | None = None,
+    ) -> ScanOutput:
         plan = plan or ScanPlan()
+        report = progress or (lambda _text: None)
         browser = await Yad2CarFinder._start_browser(Yad2CarFinder._CHROME_ARGUMENTS)
         try:
             logger.info("Browser started")
@@ -347,6 +354,7 @@ class Yad2CarFinder:
             )
 
             listings: dict[str, CarListing] = {}
+            report("Results page 1")
             if has_results:
                 max_pages = await Yad2CarFinder._fetch_page_results(tab, listings)
                 if max_pages == 0:
@@ -354,6 +362,7 @@ class Yad2CarFinder:
                 logger.info("Page scraped", page=f"1/{max_pages}", total_results=len(listings))
                 separator = "&" if "?" in search_url else "?"
                 for page_number in range(2, max_pages + 1):
+                    report(f"Results page {page_number}/{max_pages}")
                     page_url = f"{search_url}{separator}page={page_number}"
                     if not await self._load_results_page(tab, page_url):
                         break
@@ -364,13 +373,17 @@ class Yad2CarFinder:
                         total_results=len(listings),
                     )
 
-            for listing in Yad2CarFinder._needs_details(list(listings.values()), plan):
+            to_fetch = Yad2CarFinder._needs_details(list(listings.values()), plan)
+            for index, listing in enumerate(to_fetch, 1):
+                report(f"Ad pages {index}/{len(to_fetch)} ({len(listings)} results)")
                 details = await Yad2CarFinder._fetch_details(tab, listing)
                 if details is not None:
                     listings[listing.url] = details
 
             removed, left_search = [], []
-            for url in sorted(plan.previous_urls - listings.keys()):
+            missing = sorted(plan.previous_urls - listings.keys())
+            for index, url in enumerate(missing, 1):
+                report(f"Checking ads that left the results {index}/{len(missing)}")
                 known = plan.known.get(url)
                 details = await Yad2CarFinder._fetch_details(
                     tab, CarListing(url, "Car listing", known.price if known else None)
@@ -386,7 +399,9 @@ class Yad2CarFinder:
                 removed=len(removed),
                 left_search=len(left_search),
             )
-            return ScanOutput(list(listings.values()), removed, left_search)
+            return ScanOutput(
+                list(listings.values()), removed, left_search, len(to_fetch) + len(missing)
+            )
         finally:
             browser.stop()
 

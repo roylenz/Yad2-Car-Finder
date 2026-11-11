@@ -45,3 +45,4 @@ class ScanOutput:
     listings: list[CarListing]  # ads in the search results
     removed: list[str] = field(default_factory=list)  # URLs Yad2 no longer serves
     left_search: list[CarListing] = field(default_factory=list)  # still live, out of results
+    details_fetched: int = 0  # ad pages opened during the scan

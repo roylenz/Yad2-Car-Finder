@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Scans · Yad2 Car Finder{% endblock %}
+{% block head %}<meta http-equiv="refresh" content="20">{% endblock %}
+{% block content %}
+<h1>Scans</h1>
+<p class="muted">Times are Israel time. This page refreshes every 20 seconds.</p>
+
+{% if not searches %}
+<div class="card"><p class="muted">No saved searches. Send the bot a Yad2 search link to start one.</p></div>
+{% endif %}
+<div class="tiles">
+{% for search in searches %}
+  <div class="card">
+    <div class="secondary">Chat {{ search.chat_id }} · every {{ search.interval_minutes }} min ·
+      <a href="{{ search.url }}" target="_blank" rel="noopener">search on Yad2</a></div>
+    {% if search.active and search.active.status == "running" %}
+      <div style="margin-top:8px"><span class="badge running">Scanning</span>
+        for {{ duration(search.active.started_at) }}</div>
+      <div style="margin-top:4px">{{ search.active.progress or "Working" }}</div>
+    {% elif search.active %}
+      <div style="margin-top:8px"><span class="badge queued">Queued</span>
+        since {{ search.active.queued_at | local }}</div>
+    {% endif %}
+    <div style="margin-top:8px">
+      {% if search.next_scan_at %}
+        Next scan <strong>{{ search.next_scan_at | until }}</strong>
+        <span class="muted">at {{ search.next_scan_at | local }}</span>
+        {% if search.active %}<div class="muted">Skipped if the current scan is still running then.</div>{% endif %}
+      {% else %}
+        <span class="muted">Next scan time is known after the bot schedules it.</span>
+      {% endif %}
+    </div>
+    {% if search.last %}
+    <div class="muted" style="margin-top:4px">Last scan {{ search.last.status }}, {{ search.last.finished_at | when }}
+      {% if search.last.status == "ok" %}· {{ search.last.results | number }} results{% endif %}</div>
+    {% endif %}
+  </div>
+{% endfor %}
+</div>
+
+<h2>History{% if chat is not none %} · chat {{ chat }} <a href="/scans" class="muted">(all)</a>{% endif %}</h2>
+<p class="muted">Last 24 h:
+  {% for status, count in counts | dictsort %}{{ count }} {{ status }}{{ ", " if not loop.last }}{% else %}no scans{% endfor %}
+</p>
+<div class="card scroll">
+  {% if history %}
+  <table>
+    <thead><tr>
+      <th>Started</th><th>Status</th><th class="num">Took</th><th class="num">Results</th>
+      <th class="num">New</th><th class="num">Drops</th><th class="num">Removed</th>
+      <th class="num hide-sm">Ad pages</th><th class="hide-sm">Chat</th><th>Details</th>
+    </tr></thead>
+    <tbody>
+    {% for scan in history %}
+      <tr>
+        <td class="secondary">{{ (scan.started_at or scan.queued_at) | local }}</td>
+        <td><span class="badge {{ scan.status }}">{{ scan.status }}</span></td>
+        <td class="num">{{ duration(scan.started_at, scan.finished_at) if scan.started_at else "—" }}</td>
+        <td class="num">{{ scan.results | number }}</td>
+        <td class="num">{{ scan.new_ads | number }}</td>
+        <td class="num">{{ scan.price_drops | number }}</td>
+        <td class="num">{{ scan.removed | number }}</td>
+        <td class="num hide-sm">{{ scan.details_fetched | number }}</td>
+        <td class="hide-sm"><a href="/scans?chat={{ scan.chat_id }}">{{ scan.chat_id }}</a></td>
+        <td class="secondary">{{ scan.progress or scan.error or "" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No scans recorded yet. Scans are logged from this version of the bot on.</p>
+  {% endif %}
+</div>
+{% endblock %}

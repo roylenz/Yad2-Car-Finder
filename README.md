@@ -9,7 +9,7 @@ Telegram bot that scrapes [Yad2](https://www.yad2.co.il/vehicles/cars) for car l
 - **Ad archive** - every ad any search finds is kept with every detail Yad2 has: mileage, mileage at the last test, last test date, test validity, when it went on the road, ownership history, which fields the Ministry of Transport verified, engine and powertrain, safety and pollution ratings, full equipment list, city, description and more (new Yad2 fields are kept automatically), its full price and change history, when Yad2 posted it, and when it was removed. Stopping a search keeps the history
 - **Photo archive** - all photos of every ad are downloaded at Yad2's original size and kept after the ad is gone (stored once even if re-posted)
 - **Accurate price drops** - prices come from the JSON Yad2 embeds in its pages, not from card text, so a "dropped by ₪3,000" badge is never mistaken for the price. Implausible drops (over 50% or under ₪5,000) are logged and not alerted
-- **Dashboard** - web pages for an overview, an ad list you can filter by make, model and subtype and sort by model, each ad's photos, details, price chart and change log, and a market view that plots every subtype of a model (or every model) by price plus a price-vs-mileage/year chart; public through Cloudflare Tunnel with Cloudflare Access login
+- **Dashboard** - web pages for an overview, an ad list you can filter by make, model and subtype and sort by model, each ad's photos, details, price chart and change log, and a market view that plots every subtype of a model (or every model) by price plus a price-vs-mileage/year chart; a scans page with each search's next scan time, the running scan's progress and every past scan's result; public through Cloudflare Tunnel with Cloudflare Access login
 - **Pluggable processors** - a small interface for running models (e.g. licence-plate recognition) over archived ads and photos; results show on the dashboard
 - **Persistent tracking** - searches, alert state and the archive survive container restarts
 - **Bounded concurrent scans** - a shared queue runs at most `MAX_CONCURRENT_SCANS` browser scans at once (default 2)
@@ -122,6 +122,11 @@ refreshed in 24 hours (up to 20 per scan), and ads that left the results. That p
 mileage and the remaining parameters, and shows whether Yad2 removed the ad. A history row is
 written only when something changes. After each scan, new photos are downloaded and the
 enabled processors run in the background.
+
+Every scan is logged with its status (queued, running, ok, failed, cancelled, or interrupted
+by a restart), live progress, duration, result counts and error. The dashboard's Scans page
+shows this history and when each search scans next; a scan that is still running when the
+next one is due makes that one skip.
 
 | Setting (`.env`) | Purpose |
 | --- | --- |

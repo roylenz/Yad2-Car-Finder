@@ -87,7 +87,9 @@
     .secondary { color: var(--text-secondary); }
     .badge { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-secondary); }
     .badge.removed { border-color: var(--critical); color: var(--critical); }
-    .badge.drop { border-color: var(--good); color: var(--good); }
+    .badge.drop, .badge.ok { border-color: var(--good); color: var(--good); }
+    .badge.failed, .badge.interrupted { border-color: var(--critical); color: var(--critical); }
+    .badge.running, .badge.queued { border-color: var(--accent); color: var(--accent); }
     form.filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; }
     form.filters input, form.filters select, form.filters button {
       font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border);
@@ -113,6 +115,7 @@
       <a href="/" class="{{ 'active' if nav == 'overview' }}">Overview</a>
       <a href="/ads" class="{{ 'active' if nav == 'ads' }}">Ads</a>
       <a href="/market" class="{{ 'active' if nav == 'market' }}">Market</a>
+      <a href="/scans" class="{{ 'active' if nav == 'scans' }}">Scans</a>
     </nav>
   </header>
   <main>{% block content %}{% endblock %}</main>

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from sqlalchemy import Engine, and_, func, or_, select, true
 
 from storage.db import utcnow
-from storage.schema import ad_snapshots, ads, analysis_results, chat_ads, photos
+from storage.schema import ad_snapshots, ads, analysis_results, chat_ads, photos, scans, searches
 
 SORTS = {
     "seen": ads.c.first_seen_at.desc(),
@@ -302,3 +302,55 @@ def group_points(rows: list, by_sub_model: bool) -> list[Group]:
             )
         )
     return sorted(groups, key=lambda group: (group.median_price, group.name))
+
+
+@dataclass
+class SearchStatus:
+    chat_id: int
+    url: str
+    interval_minutes: int
+    next_scan_at: datetime.datetime | None
+    active: object | None  # the queued or running scan, if any
+    last: object | None  # the latest finished scan
+
+
+def search_statuses(engine: Engine) -> list[SearchStatus]:
+    """Every saved search with its next scheduled scan, current scan and latest result."""
+    with engine.connect() as db:
+        rows = db.execute(select(searches).order_by(searches.c.chat_id)).all()
+        statuses = []
+        for row in rows:
+            latest = db.execute(
+                select(scans)
+                .where(scans.c.chat_id == row.chat_id)
+                .order_by(scans.c.id.desc())
+                .limit(20)
+            ).all()
+            active = next((scan for scan in latest if scan.status in ("queued", "running")), None)
+            last = next(
+                (scan for scan in latest if scan.status not in ("queued", "running")), None
+            )
+            statuses.append(
+                SearchStatus(
+                    row.chat_id, row.url, row.interval_minutes, row.next_scan_at, active, last
+                )
+            )
+    return statuses
+
+
+def scan_history(engine: Engine, limit: int = 200, chat_id: int | None = None) -> list:
+    statement = select(scans).order_by(scans.c.id.desc()).limit(limit)
+    if chat_id is not None:
+        statement = statement.where(scans.c.chat_id == chat_id)
+    with engine.connect() as db:
+        return db.execute(statement).all()
+
+
+def scan_counts(engine: Engine, since: datetime.datetime) -> dict[str, int]:
+    with engine.connect() as db:
+        rows = db.execute(
+            select(scans.c.status, func.count())
+            .where(scans.c.queued_at >= since)
+            .group_by(scans.c.status)
+        ).all()
+    return {status: count for status, count in rows}

@@ -59,9 +59,10 @@ src/
     listing.py               # CarListing, ScanPlan, ScanOutput
     car_search_filter.py     # search filter params & enums
   storage/
-    schema.py                # SQLAlchemy tables (ads, ad_snapshots, photos, chat_ads, analysis_results, ...)
+    schema.py                # SQLAlchemy tables (ads, ad_snapshots, photos, chat_ads, scans, analysis_results, ...)
     db.py                    # engine from DATABASE_URL / DATA_DIR, Alembic migrate(), upsert helper
     ads.py                   # AdRepository: catalog upserts, change history, photo rows, chat state
+    scans.py                 # ScanLog: one row per scan (status, progress, counts) + next scan time
     photos.py                # PhotoStore protocol + LocalPhotoStore (content-addressed by sha256)
     migrations/              # Alembic migrations (run automatically at startup)
   tracking/

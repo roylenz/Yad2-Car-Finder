@@ -6,6 +6,7 @@ Run: `uvicorn --factory --app-dir src dashboard.app:create_app`.
 import datetime
 import json
 import uuid
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -41,6 +42,39 @@ def _when(value: datetime.datetime | None) -> str:
     if delta < datetime.timedelta(days=1):
         return f"{int(delta.total_seconds() // 3600)} h ago"
     return f"{delta.days} d ago"
+
+
+_LOCAL_TIME = ZoneInfo("Asia/Jerusalem")
+
+
+def _local(value: datetime.datetime | None) -> str:
+    """Naive UTC -> Israel time; just the clock for today."""
+    if value is None:
+        return "—"
+    local = value.replace(tzinfo=datetime.UTC).astimezone(_LOCAL_TIME)
+    today = datetime.datetime.now(_LOCAL_TIME).date()
+    return local.strftime("%H:%M:%S" if local.date() == today else "%d/%m %H:%M")
+
+
+def _until(value: datetime.datetime | None) -> str:
+    if value is None:
+        return "—"
+    seconds = int((value - utcnow()).total_seconds())
+    if seconds <= 0:
+        return "due now"
+    if seconds < 90:
+        return f"in {seconds} s"
+    if seconds < 5400:
+        return f"in {round(seconds / 60)} min"
+    return f"in {seconds / 3600:.1f} h"
+
+
+def _duration(start: datetime.datetime | None, end: datetime.datetime | None = None) -> str:
+    if start is None:
+        return "—"
+    seconds = max(int(((end or utcnow()) - start).total_seconds()), 0)
+    minutes, seconds = divmod(seconds, 60)
+    return f"{minutes} min {seconds:02d} s" if minutes else f"{seconds} s"
 
 
 def _param(value, key: str = "") -> str:
@@ -123,8 +157,9 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
     templates = Jinja2Templates(directory=_TEMPLATES)
     templates.env.filters.update(
         shekels=_shekels, number=_number, when=_when, change_summary=_change_summary,
-        param=_param,
+        param=_param, local=_local, until=_until,
     )
+    templates.env.globals["duration"] = _duration
     templates.env.globals["days_listed"] = queries.days_listed
 
     @app.get("/healthz", response_class=PlainTextResponse)
@@ -139,7 +174,23 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
             {
                 "stats": queries.overview(engine),
                 "events": queries.recent_events(engine),
+                "searches": queries.search_statuses(engine),
                 "nav": "overview",
+            },
+        )
+
+    @pages.get("/scans", response_class=HTMLResponse)
+    def scan_page(request: Request, chat: str = ""):
+        chat_id = int(chat) if chat.lstrip("-").isdigit() else None
+        return templates.TemplateResponse(
+            request,
+            "scans.html",
+            {
+                "searches": queries.search_statuses(engine),
+                "history": queries.scan_history(engine, chat_id=chat_id),
+                "counts": queries.scan_counts(engine, utcnow() - datetime.timedelta(days=1)),
+                "chat": chat_id,
+                "nav": "scans",
             },
         )
 

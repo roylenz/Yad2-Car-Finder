@@ -23,6 +23,28 @@ searches = Table(
     Column("chat_id", Integer, primary_key=True),
     Column("url", Text, nullable=False),
     Column("interval_minutes", Integer, nullable=False),
+    Column("next_scan_at", DateTime),
+)
+
+# One row per scan run: queued -> running -> ok / failed / cancelled / interrupted.
+scans = Table(
+    "scans",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("chat_id", Integer, nullable=False),
+    Column("search_url", Text, nullable=False),
+    Column("status", String(16), nullable=False),
+    Column("progress", Text),
+    Column("error", Text),
+    Column("queued_at", DateTime, nullable=False),
+    Column("started_at", DateTime),
+    Column("finished_at", DateTime),
+    Column("results", Integer),
+    Column("new_ads", Integer),
+    Column("price_drops", Integer),
+    Column("removed", Integer),
+    Column("details_fetched", Integer),
+    Index("ix_scans_chat_queued", "chat_id", "queued_at"),
 )
 
 access = Table(
