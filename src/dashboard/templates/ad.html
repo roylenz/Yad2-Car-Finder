@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% block title %}{{ ad.title }} · Yad2 Car Finder{% endblock %}
+{% block head %}
+<style>
+  .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+  .gallery figure { margin: 0; position: relative; }
+  .gallery img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 8px; background: var(--surface-2); display: block; }
+  .gallery figcaption { position: absolute; left: 6px; bottom: 6px; font-size: 11px; background: var(--surface-1); color: var(--text-secondary); padding: 0 6px; border-radius: 6px; }
+  .gallery .pending { aspect-ratio: 4 / 3; border-radius: 8px; background: var(--surface-2); display: grid; place-items: center; color: var(--text-muted); font-size: 12px; }
+  dl.params { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
+  dl.params dt { color: var(--text-secondary); }
+  dl.params dd { margin: 0; }
+  pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-size: 12px; }
+  details.analysis summary { cursor: pointer; list-style: revert; }
+  details.analysis summary h2 { display: inline-block; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { font-size: 13px; padding: 2px 10px; border-radius: 999px; background: var(--surface-2); color: var(--text-secondary); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 800px) { .two { grid-template-columns: 1fr; } }
+</style>
+{% endblock %}
+{% block content %}
+<h1><bdi>{{ ad.title }}</bdi> {% if ad.year %}<span class="muted">{{ ad.year }}</span>{% endif %}</h1>
+<p class="secondary">
+  <bdi dir="rtl">{{ ad.sub_model or "" }}</bdi>
+  {% if ad.removed_at %}<span class="badge removed">Removed {{ ad.removed_at | when }}</span>{% endif %}
+  · <a href="{{ ad.url }}" target="_blank" rel="noopener noreferrer">Open on Yad2</a>
+</p>
+
+<div class="tiles">
+  <div class="card tile"><div class="label">Price</div><div class="value">{{ ad.price | shekels }}</div></div>
+  <div class="card tile">
+    <div class="label">Days listed</div><div class="value">{{ days_listed(ad) }}</div>
+    <div class="sub">{{ "Since Yad2 posting" if ad.listed_at else "Since first seen by the bot" }}</div>
+  </div>
+  <div class="card tile">
+    <div class="label">Mileage</div><div class="value">{{ ad.km | number }}</div>
+    {% if ad.attributes and ad.attributes.km_at_last_test %}
+    <div class="sub">{{ ad.attributes.km_at_last_test | number }} at last test{% if ad.attributes.last_test_date %} ({{ ad.attributes.last_test_date[5:7] }}/{{ ad.attributes.last_test_date[:4] }}){% endif %}</div>
+    {% endif %}
+  </div>
+  <div class="card tile">
+    <div class="label">Hand</div><div class="value">{{ ad.hand or "—" }}</div>
+    {% if ad.attributes and ad.attributes.on_road_since %}
+    <div class="sub">On the road since {{ ad.attributes.on_road_since[5:7] }}/{{ ad.attributes.on_road_since[:4] }}</div>
+    {% endif %}
+  </div>
+</div>
+
+<h2>Price history</h2>
+<div class="card">
+  <div class="chart-box"><canvas id="price-chart" aria-label="Price over time" role="img"></canvas></div>
+</div>
+
+<h2>Photos <span class="muted">({{ photos | length }})</span></h2>
+<div class="card">
+  {% if photos %}
+  <div class="gallery">
+    {% for photo in photos %}
+    <figure>
+      {% if photo.sha256 %}
+      <a href="/photos/{{ photo.sha256 }}" target="_blank"><img src="/thumbs/{{ photo.sha256 }}" alt="Photo {{ loop.index }}" loading="lazy"></a>
+      {% else %}
+      <div class="pending">{{ "Download failed" if photo.download_attempts >= 5 else "Downloading…" }}</div>
+      {% endif %}
+      {% if photo.removed_from_ad_at %}<figcaption>Removed from ad</figcaption>{% endif %}
+    </figure>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted">No photos recorded.</p>
+  {% endif %}
+</div>
+
+<div class="two">
+  <div>
+    {% for title, rows in detail_groups %}
+    <h2>{{ title }}</h2>
+    <div class="card">
+      <dl class="params">
+        {% for label, value in rows %}
+        <dt>{{ label }}</dt><dd><bdi>{{ value }}</bdi></dd>
+        {% endfor %}
+      </dl>
+    </div>
+    {% endfor %}
+    {% set fitted, missing = equipment %}
+    {% if fitted or missing %}
+    <h2>Equipment</h2>
+    <div class="card">
+      <div class="chips">{% for item in fitted %}<span class="chip">{{ item }}</span>{% endfor %}</div>
+      {% if missing %}<p class="muted" style="margin: 10px 0 0">Not fitted: {{ missing | join(", ") }}</p>{% endif %}
+    </div>
+    {% endif %}
+    <h2>Tracking</h2>
+    <div class="card">
+      <dl class="params">
+        {% if ad.listed_at %}<dt>Posted on Yad2</dt><dd>{{ ad.listed_at.strftime("%d/%m/%Y %H:%M") }} UTC</dd>{% endif %}
+        <dt>First seen by the bot</dt><dd>{{ ad.first_seen_at.strftime("%d/%m/%Y %H:%M") }} UTC</dd>
+        <dt>Last seen</dt><dd>{{ ad.last_seen_at | when }}</dd>
+        {% if ad.attributes and ad.attributes.tags %}<dt>Tags</dt><dd><bdi>{{ ad.attributes.tags | join(", ") }}</bdi></dd>{% endif %}
+        {% if chats %}<dt>In searches of</dt><dd>{% for chat in chats %}<a href="/ads?chat={{ chat }}&status=all">Chat {{ chat }}</a>{{ ", " if not loop.last }}{% endfor %}</dd>{% endif %}
+      </dl>
+    </div>
+    {% if ad.attributes and ad.attributes.description %}
+    <h2>Description</h2>
+    <div class="card"><p dir="auto" style="white-space: pre-line; margin: 0">{{ ad.attributes.description }}</p></div>
+    {% endif %}
+  </div>
+  <div>
+    <h2>Change log</h2>
+    <div class="card scroll">
+      <table>
+        <thead><tr><th>When</th><th>Change</th></tr></thead>
+        <tbody>
+        {% for row in history %}
+          <tr><td class="secondary">{{ row.observed_at.strftime("%Y-%m-%d %H:%M") }}</td><td>{{ row.changes | change_summary }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if results %}
+    <details class="analysis">
+    <summary><h2>Analysis <span class="muted">({{ results | length }} results)</span></h2></summary>
+    <div class="card scroll">
+      <table>
+        <thead><tr><th>Processor</th><th>Target</th><th>Result</th></tr></thead>
+        <tbody>
+        {% for result in results %}
+          <tr>
+            <td>{{ result.processor }} <span class="muted">v{{ result.version }}</span></td>
+            <td class="secondary">{{ "Ad" if result.target_type == "ad" else "Photo " ~ result.target_id[:8] }}</td>
+            <td>{% if result.status == "ok" %}<pre>{{ result.result | tojson(indent=1) }}</pre>{% else %}<span class="badge removed">Error</span> <span class="muted">{{ result.error }}</span>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    </details>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+  const points = {{ price_points | safe }};
+  const css = getComputedStyle(document.documentElement);
+  const token = (name) => css.getPropertyValue(name).trim();
+  const shekels = (value) => "₪" + Number(value).toLocaleString("en-US");
+  const times = points.map((point) => Date.parse(point.t + "Z"));
+  const shortRange = times.length && Math.max(...times) - Math.min(...times) < 2 * 86400000;
+  const dateLabel = (ms) => shortRange
+    ? new Date(ms).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
+    : new Date(ms).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  if (points.length) {
+    new Chart(document.getElementById("price-chart"), {
+      type: "line",
+      data: {
+        datasets: [{
+          label: "Price",
+          data: points.map((point) => ({ x: Date.parse(point.t + "Z"), y: point.price })),
+          stepped: "before",
+          borderColor: token("--series-1"),
+          backgroundColor: token("--series-1"),
+          borderWidth: 2,
+          pointRadius: 4,
+          pointHoverRadius: 6,
+          pointBorderColor: token("--surface-1"),
+          pointBorderWidth: 2,
+        }],
+      },
+      options: {
+        maintainAspectRatio: false,
+        interaction: { mode: "nearest", axis: "x", intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: (items) => new Date(items[0].parsed.x).toLocaleString("en-GB"),
+              label: (item) => shekels(item.parsed.y),
+            },
+          },
+        },
+        scales: {
+          x: {
+            type: "linear",
+            ticks: { color: token("--text-secondary"), callback: dateLabel, maxTicksLimit: 6 },
+            grid: { color: token("--grid") },
+            border: { color: token("--border") },
+          },
+          y: {
+            ticks: { color: token("--text-secondary"), callback: shekels },
+            grid: { color: token("--grid") },
+            border: { display: false },
+            grace: "10%",
+          },
+        },
+      },
+    });
+  }
+</script>
+{% endblock %}

@@ -1,185 +1,155 @@
-"""Persistent searches and last observed listing values."""
+"""Saved searches, access control, and the per-chat view of the ad catalog."""
 
-import os
-import sqlite3
-from contextlib import contextmanager
-from pathlib import Path
-from typing import Iterator
+from sqlalchemy import delete, insert, literal, select, update
 
 from car.listing import CarListing
+from storage.ads import AdRepository
+from storage.db import default_database_url, get_engine, migrate, sqlite_url, upsert
+from storage.schema import access, access_meta, access_requests, admins, searches
 
 
 class BotState:
-    def __init__(self, path: str | None = None) -> None:
-        db_path = Path(path or os.getenv("BOT_DB_PATH", "data/bot.sqlite3"))
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.path = db_path
-        with self._connect() as db:
-            db.execute(
-                "CREATE TABLE IF NOT EXISTS searches ("
-                "chat_id INTEGER PRIMARY KEY, url TEXT NOT NULL, interval_minutes INTEGER NOT NULL)"
-            )
-            db.execute(
-                "CREATE TABLE IF NOT EXISTS listings ("
-                "chat_id INTEGER NOT NULL, url TEXT NOT NULL, title TEXT NOT NULL, "
-                "price INTEGER, km INTEGER, PRIMARY KEY (chat_id, url))"
-            )
-            columns = {row[1] for row in db.execute("PRAGMA table_info(listings)")}
-            for column in ("hand", "year"):
-                if column not in columns:
-                    db.execute(f"ALTER TABLE listings ADD COLUMN {column} INTEGER")
-            db.execute(
-                "CREATE TABLE IF NOT EXISTS access (user_id INTEGER PRIMARY KEY, allowed INTEGER NOT NULL)"
-            )
-            db.execute("CREATE TABLE IF NOT EXISTS admins (user_id INTEGER PRIMARY KEY)")
-            db.execute(
-                "CREATE TABLE IF NOT EXISTS access_requests ("
-                "user_id INTEGER PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL)"
-            )
-            db.execute("CREATE TABLE IF NOT EXISTS access_meta (key TEXT PRIMARY KEY)")
-
-    @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
-        db = sqlite3.connect(self.path)
-        try:
-            with db:
-                yield db
-        finally:
-            db.close()
+    def __init__(self, path: str | None = None, database_url: str | None = None) -> None:
+        url = database_url or (sqlite_url(path) if path else default_database_url())
+        migrate(url)
+        self.engine = get_engine(url)
+        self.ads = AdRepository(self.engine)
 
     def set_search(self, chat_id: int, url: str, interval_minutes: int) -> None:
-        with self._connect() as db:
-            previous = db.execute("SELECT url FROM searches WHERE chat_id=?", (chat_id,)).fetchone()
-            if previous is None or previous[0] != url:
-                db.execute("DELETE FROM listings WHERE chat_id=?", (chat_id,))
-            db.execute(
-                "INSERT INTO searches(chat_id,url,interval_minutes) VALUES (?,?,?) "
-                "ON CONFLICT(chat_id) DO UPDATE SET url=excluded.url, "
-                "interval_minutes=excluded.interval_minutes",
-                (chat_id, url, interval_minutes),
+        with self.engine.begin() as db:
+            previous = db.execute(
+                select(searches.c.url).where(searches.c.chat_id == chat_id)
+            ).first()
+            upsert(
+                db,
+                searches,
+                {"chat_id": chat_id, "url": url, "interval_minutes": interval_minutes},
+                ["chat_id"],
+                ["url", "interval_minutes"],
             )
+        if previous is None or previous.url != url:
+            self.ads.clear_chat(chat_id)
 
     def get_search(self, chat_id: int) -> tuple[str, int] | None:
-        with self._connect() as db:
-            return db.execute(
-                "SELECT url, interval_minutes FROM searches WHERE chat_id=?", (chat_id,)
-            ).fetchone()
+        with self.engine.connect() as db:
+            row = db.execute(
+                select(searches.c.url, searches.c.interval_minutes).where(
+                    searches.c.chat_id == chat_id
+                )
+            ).first()
+        return tuple(row) if row else None
 
     def active_searches(self) -> list[tuple[int, str, int]]:
-        with self._connect() as db:
-            return db.execute(
-                "SELECT chat_id, url, interval_minutes FROM searches WHERE interval_minutes > 0"
-            ).fetchall()
+        with self.engine.connect() as db:
+            rows = db.execute(
+                select(searches.c.chat_id, searches.c.url, searches.c.interval_minutes).where(
+                    searches.c.interval_minutes > 0
+                )
+            ).all()
+        return [tuple(row) for row in rows]
 
     def stop_search(self, chat_id: int) -> None:
-        with self._connect() as db:
-            db.execute("DELETE FROM searches WHERE chat_id=?", (chat_id,))
-            db.execute("DELETE FROM listings WHERE chat_id=?", (chat_id,))
+        """Forget the chat's search and alert state; the ad history is kept."""
+        with self.engine.begin() as db:
+            db.execute(delete(searches).where(searches.c.chat_id == chat_id))
+        self.ads.clear_chat(chat_id)
 
     def previous_listings(self, chat_id: int) -> dict[str, CarListing]:
-        with self._connect() as db:
-            rows = db.execute(
-                "SELECT url, title, price, km, hand, year FROM listings WHERE chat_id=?", (chat_id,)
-            ).fetchall()
-        return {row[0]: CarListing(*row) for row in rows}
+        return self.ads.chat_listings(chat_id)
 
-    def save_listings(self, chat_id: int, listings: list[CarListing]) -> None:
-        with self._connect() as db:
-            db.executemany(
-                "INSERT INTO listings(chat_id,url,title,price,km,hand,year) VALUES (?,?,?,?,?,?,?) "
-                "ON CONFLICT(chat_id,url) DO UPDATE SET title=excluded.title, "
-                "price=COALESCE(excluded.price,listings.price), "
-                "km=COALESCE(excluded.km,listings.km), "
-                "hand=COALESCE(excluded.hand,listings.hand), "
-                "year=COALESCE(excluded.year,listings.year)",
-                [
-                    (chat_id, item.url, item.title, item.price, item.km, item.hand, item.year)
-                    for item in listings
-                ],
-            )
+    def save_listings(
+        self, chat_id: int, listings: list[CarListing], out_of_results: list[str] = ()
+    ) -> None:
+        self.ads.record(listings)
+        self.ads.save_chat(chat_id, listings, out_of_results)
 
     def seen_count(self, chat_id: int) -> int:
-        with self._connect() as db:
-            return db.execute("SELECT COUNT(*) FROM listings WHERE chat_id=?", (chat_id,)).fetchone()[0]
+        return self.ads.chat_count(chat_id)
 
     def access_override(self, user_id: int) -> bool | None:
-        with self._connect() as db:
-            row = db.execute("SELECT allowed FROM access WHERE user_id=?", (user_id,)).fetchone()
-        return bool(row[0]) if row else None
+        with self.engine.connect() as db:
+            row = db.execute(select(access.c.allowed).where(access.c.user_id == user_id)).first()
+        return bool(row.allowed) if row else None
 
     def set_access(self, user_id: int, allowed: bool) -> None:
-        with self._connect() as db:
-            db.execute(
-                "INSERT INTO access(user_id,allowed) VALUES (?,?) "
-                "ON CONFLICT(user_id) DO UPDATE SET allowed=excluded.allowed",
-                (user_id, int(allowed)),
-            )
+        with self.engine.begin() as db:
+            upsert(db, access, {"user_id": user_id, "allowed": int(allowed)}, ["user_id"], ["allowed"])
 
     def access_overrides(self) -> dict[int, bool]:
-        with self._connect() as db:
-            rows = db.execute("SELECT user_id, allowed FROM access").fetchall()
-        return {user_id: bool(allowed) for user_id, allowed in rows}
+        with self.engine.connect() as db:
+            rows = db.execute(select(access.c.user_id, access.c.allowed)).all()
+        return {row.user_id: bool(row.allowed) for row in rows}
 
     def claim_first_admin(self, user_id: int, configured_admins: bool) -> bool:
         """Atomically claim bootstrap once, even if two users message together."""
-        with self._connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            if configured_admins:
-                db.execute("INSERT OR IGNORE INTO access_meta(key) VALUES ('bootstrapped')")
+        with self.engine.begin() as db:
+            claimed = db.execute(
+                insert(access_meta)
+                .from_select(
+                    ["key"],
+                    select(literal("bootstrapped")).where(
+                        ~select(access_meta.c.key)
+                        .where(access_meta.c.key == "bootstrapped")
+                        .exists()
+                    ),
+                )
+            ).rowcount
+            if configured_admins or not claimed:
                 return False
-            if db.execute(
-                "SELECT 1 FROM access_meta WHERE key='bootstrapped'"
-            ).fetchone():
-                return False
-            db.execute("INSERT INTO admins(user_id) VALUES (?)", (user_id,))
-            db.execute("INSERT INTO access_meta(key) VALUES ('bootstrapped')")
+            upsert(db, admins, {"user_id": user_id}, ["user_id"])
             return True
 
     def is_admin(self, user_id: int) -> bool:
-        with self._connect() as db:
-            return db.execute("SELECT 1 FROM admins WHERE user_id=?", (user_id,)).fetchone() is not None
+        with self.engine.connect() as db:
+            return db.execute(select(admins).where(admins.c.user_id == user_id)).first() is not None
 
     def admin_ids(self) -> set[int]:
-        with self._connect() as db:
-            return {row[0] for row in db.execute("SELECT user_id FROM admins")}
+        with self.engine.connect() as db:
+            return {row.user_id for row in db.execute(select(admins.c.user_id))}
 
     def set_admin(self, user_id: int, admin: bool) -> None:
-        with self._connect() as db:
+        with self.engine.begin() as db:
             if admin:
-                db.execute("INSERT OR IGNORE INTO admins(user_id) VALUES (?)", (user_id,))
+                upsert(db, admins, {"user_id": user_id}, ["user_id"])
             else:
-                db.execute("DELETE FROM admins WHERE user_id=?", (user_id,))
+                db.execute(delete(admins).where(admins.c.user_id == user_id))
 
     def request_access(self, user_id: int, name: str) -> None:
-        with self._connect() as db:
-            db.execute(
-                "INSERT INTO access_requests(user_id,name,status) VALUES (?,?,'pending') "
-                "ON CONFLICT(user_id) DO UPDATE SET name=excluded.name,status='pending'",
-                (user_id, name),
+        with self.engine.begin() as db:
+            upsert(
+                db,
+                access_requests,
+                {"user_id": user_id, "name": name, "status": "pending"},
+                ["user_id"],
+                ["name", "status"],
             )
 
     def access_request(self, user_id: int) -> tuple[str, str] | None:
-        with self._connect() as db:
-            return db.execute(
-                "SELECT name,status FROM access_requests WHERE user_id=?", (user_id,)
-            ).fetchone()
+        with self.engine.connect() as db:
+            row = db.execute(
+                select(access_requests.c.name, access_requests.c.status).where(
+                    access_requests.c.user_id == user_id
+                )
+            ).first()
+        return tuple(row) if row else None
 
     def pending_requests(self) -> list[tuple[int, str]]:
-        with self._connect() as db:
-            return db.execute(
-                "SELECT user_id,name FROM access_requests WHERE status='pending' ORDER BY rowid"
-            ).fetchall()
+        with self.engine.connect() as db:
+            rows = db.execute(
+                select(access_requests.c.user_id, access_requests.c.name)
+                .where(access_requests.c.status == "pending")
+                .order_by(access_requests.c.user_id)
+            ).all()
+        return [tuple(row) for row in rows]
 
     def resolve_request(self, user_id: int, approved: bool) -> bool:
-        with self._connect() as db:
-            cursor = db.execute(
-                "UPDATE access_requests SET status=? WHERE user_id=? AND status='pending'",
-                ("approved" if approved else "denied", user_id),
+        with self.engine.begin() as db:
+            result = db.execute(
+                update(access_requests)
+                .where(access_requests.c.user_id == user_id, access_requests.c.status == "pending")
+                .values(status="approved" if approved else "denied")
             )
-            if cursor.rowcount and approved:
-                db.execute(
-                    "INSERT INTO access(user_id,allowed) VALUES (?,1) "
-                    "ON CONFLICT(user_id) DO UPDATE SET allowed=1",
-                    (user_id,),
-                )
-            return cursor.rowcount > 0
+            if result.rowcount and approved:
+                upsert(db, access, {"user_id": user_id, "allowed": 1}, ["user_id"], ["allowed"])
+            return result.rowcount > 0
+

@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Overview</h1>
+<div class="tiles">
+  <div class="card tile"><div class="label">Active ads</div><div class="value">{{ stats.active | number }}</div></div>
+  <div class="card tile"><div class="label">New in last 24 h</div><div class="value">{{ stats.new_today | number }}</div></div>
+  <div class="card tile"><div class="label">Price drops in last 24 h</div><div class="value">{{ stats.drops_today | number }}</div></div>
+  <div class="card tile"><div class="label">Removed in last 7 days</div><div class="value">{{ stats.removed_week | number }}</div></div>
+  <div class="card tile">
+    <div class="label">Median days until removed</div>
+    <div class="value">{{ stats.median_days_to_remove if stats.median_days_to_remove is not none else "—" }}</div>
+    <div class="sub">Removed ads are usually sold</div>
+  </div>
+  <div class="card tile">
+    <div class="label">Photos archived</div>
+    <div class="value">{{ stats.photos | number }}</div>
+    <div class="sub">{{ "%.1f" | format(stats.photo_bytes / 1048576) }} MB</div>
+  </div>
+</div>
+
+<h2>Recent changes</h2>
+<div class="card scroll">
+  {% if events %}
+  <table>
+    <thead><tr><th>When</th><th>Car</th><th>Change</th><th class="num">Price</th></tr></thead>
+    <tbody>
+    {% for event in events %}
+      <tr>
+        <td class="secondary">{{ event.observed_at | when }}</td>
+        <td><a href="/ads/{{ event.token }}" dir="auto">{{ event.title }}</a> <span class="muted">{{ event.year or "" }}</span></td>
+        <td>{{ event.changes | change_summary }}</td>
+        <td class="num">{{ event.price | shekels }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No ads recorded yet. They appear after the bot's next scan.</p>
+  {% endif %}
+</div>
+{% endblock %}

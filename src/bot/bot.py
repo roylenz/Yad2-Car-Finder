@@ -37,11 +37,16 @@ from bot.handlers import (
     scanner,
 )
 from bot.scanner import schedule_scan
+from tracking.background import BackgroundPipeline
 
 
 async def restore_searches(app: Application) -> None:
     await configure_menu(app.bot, app.bot_data["access"].admin_ids())
     scanner.start_workers()
+    pipeline = BackgroundPipeline(scanner.state.ads)
+    scanner.on_scan_complete = pipeline.wake
+    pipeline.start()
+    app.bot_data["pipeline"] = pipeline
     for chat_id, url, interval in scanner.state.active_searches():
         if scanner.access_check(chat_id):
             schedule_scan(app.job_queue, scanner, chat_id, url, interval, first=5)
@@ -50,6 +55,8 @@ async def restore_searches(app: Application) -> None:
 
 async def stop_scan_workers(app: Application) -> None:
     await scanner.stop_workers()
+    if "pipeline" in app.bot_data:
+        await app.bot_data["pipeline"].stop()
 
 
 def create_bot() -> Application:

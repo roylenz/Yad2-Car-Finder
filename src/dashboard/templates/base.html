@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Yad2 Car Finder{% endblock %}</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --surface-0: #f4f3f0;
+      --surface-1: #fcfcfb;
+      --surface-2: #eeede9;
+      --border: #dddcd6;
+      --grid: #e6e5e0;
+      --text-primary: #0b0b0b;
+      --text-secondary: #52514e;
+      --text-muted: #77756f;
+      --accent: #2a78d6;
+      --series-1: #2a78d6;
+      --series-2: #eb6834;
+      --good: #008300;
+      --critical: #c93636;
+      --radius: 10px;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        color-scheme: dark;
+        --surface-0: #121211;
+        --surface-1: #1a1a19;
+        --surface-2: #252523;
+        --border: #34342f;
+        --grid: #2c2c29;
+        --text-primary: #f0efec;
+        --text-secondary: #c3c2b7;
+        --text-muted: #8f8e86;
+        --accent: #3987e5;
+        --series-1: #3987e5;
+        --series-2: #d95926;
+        --good: #3fa83f;
+        --critical: #e66767;
+      }
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --surface-0: #121211;
+      --surface-1: #1a1a19;
+      --surface-2: #252523;
+      --border: #34342f;
+      --grid: #2c2c29;
+      --text-primary: #f0efec;
+      --text-secondary: #c3c2b7;
+      --text-muted: #8f8e86;
+      --accent: #3987e5;
+      --series-1: #3987e5;
+      --series-2: #d95926;
+      --good: #3fa83f;
+      --critical: #e66767;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--surface-0); color: var(--text-primary);
+      font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Hebrew", sans-serif;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    header {
+      display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
+      padding: 12px 16px; background: var(--surface-1); border-bottom: 1px solid var(--border);
+    }
+    header .brand { font-weight: 650; color: var(--text-primary); }
+    header nav { display: flex; gap: 16px; }
+    header nav a { color: var(--text-secondary); padding: 4px 0; }
+    header nav a.active { color: var(--text-primary); border-bottom: 2px solid var(--accent); }
+    main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 48px; }
+    h1 { font-size: 22px; margin: 0 0 16px; }
+    h2 { font-size: 16px; margin: 28px 0 12px; }
+    .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+    .tile .label { color: var(--text-secondary); font-size: 13px; }
+    .tile .value { font-size: 28px; font-weight: 650; font-variant-numeric: tabular-nums; margin-top: 4px; }
+    .tile .sub { color: var(--text-muted); font-size: 12px; }
+    table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+    th { color: var(--text-secondary); font-weight: 550; font-size: 13px; }
+    td.num, th.num { text-align: right; }
+    .muted { color: var(--text-muted); }
+    .secondary { color: var(--text-secondary); }
+    .badge { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-secondary); }
+    .badge.removed { border-color: var(--critical); color: var(--critical); }
+    .badge.drop { border-color: var(--good); color: var(--good); }
+    form.filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; }
+    form.filters input, form.filters select, form.filters button {
+      font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--surface-1); color: var(--text-primary);
+    }
+    form.filters button { background: var(--accent); color: #fff; border-color: var(--accent); cursor: pointer; }
+    .scroll { overflow-x: auto; }
+    .thumb { width: 96px; height: 72px; object-fit: cover; border-radius: 6px; background: var(--surface-2); display: block; }
+    .pager { display: flex; gap: 12px; margin-top: 16px; align-items: center; }
+    .chart-box { position: relative; height: 320px; }
+    @media (max-width: 640px) {
+      .hide-sm { display: none; }
+      .thumb { width: 72px; height: 54px; }
+      .tile .value { font-size: 22px; }
+    }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <header>
+    <a class="brand" href="/">Yad2 Car Finder</a>
+    <nav>
+      <a href="/" class="{{ 'active' if nav == 'overview' }}">Overview</a>
+      <a href="/ads" class="{{ 'active' if nav == 'ads' }}">Ads</a>
+      <a href="/market" class="{{ 'active' if nav == 'market' }}">Market</a>
+    </nav>
+  </header>
+  <main>{% block content %}{% endblock %}</main>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

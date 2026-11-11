@@ -38,7 +38,11 @@
 - Interactive config via `ConversationHandler` with inline keyboards
 - Periodic scanning via `JobQueue.run_repeating()`, or one-time scan (interval=0)
 - State stored in `context.chat_data` (per-chat filter, scan status)
-- Scanner tracks seen URLs per chat; first scan sends all, subsequent only new
+- Ads are stored once in a global catalog (`ads`, history in `ad_snapshots`, `photos`); `chat_ads` holds per-chat alert state. First scan of a search sends all, later scans only new ads and price drops
+- `/stop` and new searches clear only `chat_ads`; the ad history is kept
+- Schema changes: add an Alembic migration in `src/storage/migrations/versions/`; keep SQL portable between SQLite and Postgres (use `storage.db.upsert`)
+- Store times as naive UTC (`storage.db.utcnow()`)
+- Models/analysis go in `src/processing/processors/` as `Processor` subclasses; never call them from the scan path
 - One-time scans auto-deactivate after completion
 - Bot token loaded from `.env` via `python-dotenv`
 
@@ -47,14 +51,37 @@
 src/
   main.py                    # entry point — starts Telegram bot
   bot/
-    bot.py                   # Application setup, handler registration
+    bot.py                   # Application setup, handler registration, background pipeline start
     handlers.py              # /start, /search, /stop, /status + ConversationHandler
     keyboards.py             # inline keyboard builders (manufacturers, models, years, intervals)
-    scanner.py               # periodic scan logic, URL diffing, Telegram notifications
+    scanner.py               # scan queue, alert formatting, Telegram notifications
+    state.py                 # BotState: searches, access control, per-chat view of the catalog
   car/
-    car_finder.py            # browser automation (nodriver)
+    car_finder.py            # browser automation (nodriver): feed pages, item pages, removal checks
+    yad2_json.py             # parse Yad2's __NEXT_DATA__ (feed + item) into CarListing
+    listing.py               # CarListing, ScanPlan, ScanOutput
     car_search_filter.py     # search filter params & enums
-    cars_link_retriever.py   # orchestrates finder
+  storage/
+    schema.py                # SQLAlchemy tables (ads, ad_snapshots, photos, chat_ads, analysis_results, ...)
+    db.py                    # engine from DATABASE_URL / DATA_DIR, Alembic migrate(), upsert helper
+    ads.py                   # AdRepository: catalog upserts, change history, photo rows, chat state
+    photos.py                # PhotoStore protocol + LocalPhotoStore (content-addressed by sha256)
+    migrations/              # Alembic migrations (run automatically at startup)
+  tracking/
+    tracker.py               # AdTracker: scan plan, apply scan → new ads / price drops; detect_changes
+    photo_archiver.py        # async httpx download of original photos
+    background.py            # BackgroundPipeline: photos then processors, woken after each scan
+  processing/
+    base.py                  # Processor interface (target "photo" or "ad")
+    registry.py              # available processors, PROCESSORS env var
+    runner.py                # runs processors once per target and version
+    processors/photo_info.py # sample processor
+  dashboard/
+    app.py                   # FastAPI app factory (create_app), pages, photo/thumbnail serving
+    auth.py                  # Cloudflare Access JWT check (DASHBOARD_AUTH=off for local dev)
+    fields.py                # labels/grouping of ad attributes and equipment for the ad page
+    queries.py               # read-only dashboard queries
+    templates/               # Jinja2 pages, Chart.js from jsdelivr
   common/
     config.py                # bot config (from .env), logger config, paths
     exceptions.py            # custom exceptions & error codes
@@ -67,12 +94,20 @@ src/
 - Feed items use `data-nagish` attributes (stable selectors)
 - Results feed items: `a[data-nagish='private-item-link']`, `a[data-nagish='agent-item-link']`, `a[data-nagish='agent-item-no-footer-link']`
 - Page load indicator: `a[data-nagish='feed-item-card-link']` (carousel/recommendations load first)
-- Results feed requires scrolling to trigger lazy loading
+- Results feed requires scrolling to trigger lazy loading (DOM fallback only)
 - Filter out `spot=look_alike` items (similar cars, not exact matches)
 - Pagination navbar: `nav[data-nagish='pagination-navbar']`
 - Ad popup may appear in iframe with title "Modal Message" and close button class `bz-close-btn`
 - Captcha may appear; detect timeout and wait for manual solve
 - Keep a small delay between page loads (~1s) to avoid rate limiting
+- Prefer the page JSON (`<script id="__NEXT_DATA__">`, react-query `dehydratedState.queries`) over DOM text:
+  - Search page: query `feed-mix` (groups `ads`, `platinum`, `boost`, `solo`) or, in an A/B variant, `feed` (`private`, `commercial`, `platinum`, `boost`, `solo`); promoted groups repeat regular ads, dedupe by `token`; `pagination.pages`
+  - Item page: query `["vehicles", "item", token]` has `km`, colour, gearbox, test date, city, description, `dates.createdAt`; missing ad = page JSON without that query (HTTP 404)
+  - Item page also has `kmInLastTest`, `lastTestDate`, `vehicleDates` (production month/year = "עלייה לכביש", `testDate` = test valid until), `isVerifiedByMt`, `specification` (equipment booleans, `airBags`, `safetyPoints` of 8, `pollutionLevel` of 15, `ignition` = drive), `powertrainArchitecture`, `carFamilyType`, `carTag`
+  - `yad2_json.listing_from_json` maps known fields to snake_case `attributes`; unknown top-level fields are kept automatically; never store `customer` (seller identity)
+  - `metaData.images` are originals on `img.yad2.co.il` (`/o/` path), downloadable with plain HTTP; pages themselves need the browser (bot protection)
+  - Times are Israel local time; store naive UTC
+- Price-drop cards have two `[data-testid=price]` elements; the first is the "ירד ב ..." badge (DOM fallback skips it)
 
 ## Deployment
 - See `docs/DEPLOYMENT.md` (Raspberry Pi via SSH host `pi`, Docker Compose)

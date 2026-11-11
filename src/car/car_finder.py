@@ -8,7 +8,8 @@ from urllib.parse import urljoin, urlsplit
 
 import nodriver as uc
 from nodriver.core.connection import ProtocolException
-from car.listing import CarListing
+from car import yad2_json
+from car.listing import CarListing, ScanOutput, ScanPlan
 from car.search_url import BASE_URL
 from common.exceptions import CustomException, ErrorCode
 from common.logger import logger
@@ -109,14 +110,58 @@ class Yad2CarFinder:
             await tab.evaluate("window.scrollBy(0, 2000)")
             await tab.sleep(0.5)
 
+    # Reads only the Next.js queries we parse (the full page JSON is several hundred KB).
+    _NEXT_DATA_EXPRESSION = """(() => {
+        const element = document.getElementById("__NEXT_DATA__");
+        let queries = null;
+        if (element) {
+            const all = JSON.parse(element.textContent)?.props?.pageProps?.dehydratedState?.queries || [];
+            queries = all.filter(query => ["feed-mix", "feed", "vehicles"].includes((query.queryKey || [])[0]));
+        }
+        return JSON.stringify({path: location.pathname, ready: document.readyState, queries});
+    })()"""
+
     @staticmethod
-    async def _fetch_page_results(tab: uc.Tab, listings: dict[str, CarListing]) -> None:
+    async def _read_next_data(tab: uc.Tab, expected_path: str | None = None) -> dict | None:
+        """Return the page's Next.js data, or None if it is missing or from another page."""
+        try:
+            page = json.loads(
+                await tab.evaluate(Yad2CarFinder._NEXT_DATA_EXPRESSION, return_by_value=True)
+            )
+            if expected_path and (
+                page.get("path", "").rstrip("/") != expected_path.rstrip("/")
+                or page.get("ready") == "loading"
+            ):
+                return None
+            if page.get("queries") is None:
+                return None
+            return {"props": {"pageProps": {"dehydratedState": {"queries": page["queries"]}}}}
+        except (ProtocolException, ValueError, TypeError, AttributeError):
+            return None
+
+    @staticmethod
+    async def _fetch_page_results(tab: uc.Tab, listings: dict[str, CarListing]) -> int:
+        """Collect the page's results; return the page count Yad2 reports (1 if unknown)."""
+        next_data = await Yad2CarFinder._read_next_data(tab)
+        ads = yad2_json.feed_ads(next_data) if next_data else []
+        if ads:
+            for ad in ads:
+                listing = yad2_json.listing_from_json(ad)
+                listings[listing.url] = listing
+            return yad2_json.feed_pages(next_data)
+        logger.warning("Feed JSON not found, reading result cards instead")
+        await Yad2CarFinder._scroll_to_results_feed(tab)
+        await Yad2CarFinder._fetch_dom_results(tab, listings)
+        return 0
+
+    @staticmethod
+    async def _fetch_dom_results(tab: uc.Tab, listings: dict[str, CarListing]) -> None:
         expression = """JSON.stringify(Array.from(document.querySelectorAll(
             "a[data-nagish=private-item-link],a[data-nagish=agent-item-link],a[data-nagish=agent-item-no-footer-link]"
         )).map(a => ({
             href: a.getAttribute("href"),
             title: a.querySelector("h2")?.innerText || a.querySelector("[data-testid=heading-line]")?.innerText,
-            price: a.querySelector("[data-testid=price]")?.innerText,
+            prices: Array.from(a.querySelectorAll("[data-testid=price]")).map(e => e.innerText),
             text: a.innerText
         })))"""
         for item in json.loads(await tab.evaluate(expression)):
@@ -131,15 +176,24 @@ class Yad2CarFinder:
             if urlsplit(url).hostname == "www.yad2.co.il" and urlsplit(url).path.startswith(
                 "/vehicles/item/"
             ):
-                price_text = item.get("price") or ""
-                digits = re.sub(r"\D", "", price_text)
                 listings[url] = CarListing(
                     url=url,
                     title=(item.get("title") or "Car listing").strip(),
-                    price=int(digits) if digits else None,
+                    price=Yad2CarFinder._parse_card_price(item.get("prices") or []),
                     hand=Yad2CarFinder._parse_hand(item.get("text")),
                     year=Yad2CarFinder._parse_year(item.get("text")),
                 )
+
+    @staticmethod
+    def _parse_card_price(price_texts: list[str]) -> int | None:
+        """Cards with a price drop show the drop amount first ("ירד ב 3,000 ₪"); skip it."""
+        for text in reversed(price_texts):
+            if "ירד" in text:
+                continue
+            digits = re.sub(r"\D", "", text)
+            if digits:
+                return int(digits)
+        return None
 
     @staticmethod
     def _parse_hand(text: str | None) -> int | None:
@@ -159,57 +213,108 @@ class Yad2CarFinder:
         return None
 
     @staticmethod
-    async def _fetch_details(tab: uc.Tab, listing: CarListing) -> CarListing:
-        """Read mileage, hand and year from the listing page, keeping known values as fallback."""
-        km, hand, year = listing.km, listing.hand, listing.year
+    async def _fetch_details(tab: uc.Tab, listing: CarListing) -> CarListing | None:
+        """Read the full ad from its page. Return None when Yad2 no longer has the ad."""
         try:
             await tab.get(listing.url)
-            expression = """(label => Array.from(document.querySelectorAll("span"))
-                .filter(x => x.children.length === 0 && x.textContent.trim() === label)
-                .map(x => x.parentElement.parentElement.querySelector("[data-testid=detail-card-value]")?.textContent)
-                .find(Boolean) || null)"""
-            for _ in range(10):
-                km_value = await tab.evaluate(f"{expression}('ק״מ')")
-                if km_value:
-                    digits = re.sub(r"\D", "", km_value)
-                    km = int(digits) if digits else km
-                    hand_value = await tab.evaluate(f"{expression}('יד')")
-                    if hand_value:
-                        digits = re.sub(r"\D", "", hand_value)
-                        hand = int(digits) if digits else hand
-                    if year is None:
-                        for label in ("שנה", "שנת יצור"):
-                            year = Yad2CarFinder._parse_year(
-                                await tab.evaluate(f"{expression}('{label}')")
-                            )
-                            if year:
-                                break
-                    break
+            for _ in range(20):
+                if urlsplit(tab.url).hostname != "www.yad2.co.il":
+                    break  # Bot check: keep what we know.
+                next_data = await Yad2CarFinder._read_next_data(
+                    tab, urlsplit(listing.url).path
+                )
+                if next_data is not None:
+                    item = yad2_json.item_data(next_data)
+                    if item is None:
+                        return None
+                    return Yad2CarFinder._merge(listing, yad2_json.listing_from_json(item, True))
                 await tab.sleep(0.5)
-            else:
-                title = await tab.evaluate("document.title") or ""
-                match = re.search(r"([\d,]+)\s*ק[״\"]מ", title)
-                if match:
-                    km = int(match.group(1).replace(",", ""))
-                hand = Yad2CarFinder._parse_hand(title) or hand
-                year = year or Yad2CarFinder._parse_year(title)
+            return await Yad2CarFinder._fetch_details_from_dom(tab, listing)
         except Exception as error:
             logger.warning("Could not read listing details", url=listing.url, error=str(error))
+            return listing
+
+    @staticmethod
+    def _merge(old: CarListing, new: CarListing) -> CarListing:
+        """Prefer the item page's values, keeping known ones it leaves out."""
+        return replace(
+            new,
+            price=new.price if new.price is not None else old.price,
+            km=new.km if new.km is not None else old.km,
+            hand=new.hand if new.hand is not None else old.hand,
+            year=new.year if new.year is not None else old.year,
+            images=new.images or old.images,
+            listed_at=new.listed_at or old.listed_at,
+            attributes={**old.attributes, **new.attributes},
+        )
+
+    @staticmethod
+    async def _fetch_details_from_dom(tab: uc.Tab, listing: CarListing) -> CarListing:
+        """Fallback when the page has no JSON: read mileage, hand and year from the page text."""
+        km, hand, year = listing.km, listing.hand, listing.year
+        expression = """(label => Array.from(document.querySelectorAll("span"))
+            .filter(x => x.children.length === 0 && x.textContent.trim() === label)
+            .map(x => x.parentElement.parentElement.querySelector("[data-testid=detail-card-value]")?.textContent)
+            .find(Boolean) || null)"""
+        for _ in range(10):
+            km_value = await tab.evaluate(f"{expression}('ק״מ')")
+            if km_value:
+                digits = re.sub(r"\D", "", km_value)
+                km = int(digits) if digits else km
+                hand_value = await tab.evaluate(f"{expression}('יד')")
+                if hand_value:
+                    digits = re.sub(r"\D", "", hand_value)
+                    hand = int(digits) if digits else hand
+                if year is None:
+                    for label in ("שנה", "שנת יצור"):
+                        year = Yad2CarFinder._parse_year(
+                            await tab.evaluate(f"{expression}('{label}')")
+                        )
+                        if year:
+                            break
+                break
+            await tab.sleep(0.5)
+        else:
+            title = await tab.evaluate("document.title") or ""
+            match = re.search(r"([\d,]+)\s*ק[״\"]מ", title)
+            if match:
+                km = int(match.group(1).replace(",", ""))
+            hand = Yad2CarFinder._parse_hand(title) or hand
+            year = year or Yad2CarFinder._parse_year(title)
         return replace(listing, km=km, hand=hand, year=year)
 
-    async def find(
-        self, search_url: str, previous_prices: dict[str, int | None] | None = None
-    ) -> list[CarListing]:
+    @staticmethod
+    def _needs_details(listings: list[CarListing], plan: ScanPlan) -> list[CarListing]:
+        """New ads, ads whose price changed, then a capped number of stale ones."""
+        now = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+        urgent, stale = [], []
+        for listing in listings:
+            known = plan.known.get(listing.url)
+            if known is None or known.details_fetched_at is None or known.price != listing.price:
+                urgent.append(listing)
+            elif now - known.details_fetched_at > plan.refresh_after:
+                stale.append(listing)
+        stale.sort(key=lambda item: plan.known[item.url].details_fetched_at)
+        return urgent + stale[: plan.max_refresh]
+
+    async def _load_results_page(self, tab: uc.Tab, url: str) -> bool:
+        logger.info("Loading page", url=url)
+        await tab.get(url)
+        await tab.sleep(Yad2CarFinder._FETCHING_INTERVAL_IN_SECONDS)
+        return await Yad2CarFinder._wait_for_page_load(
+            tab,
+            Yad2CarFinder._PAGE_LOAD_TIMEOUT_IN_SECONDS,
+            Yad2CarFinder._CAPTCHA_TIMEOUT_IN_SECONDS,
+            Yad2CarFinder._POLL_INTERVAL_IN_SECONDS,
+        )
+
+    async def find(self, search_url: str, plan: ScanPlan | None = None) -> ScanOutput:
+        plan = plan or ScanPlan()
         browser = await Yad2CarFinder._start_browser(Yad2CarFinder._CHROME_ARGUMENTS)
         try:
             logger.info("Browser started")
-
-            car_search_url = search_url
-
-            logger.info("Loading page", url=car_search_url)
-            tab = await browser.get(car_search_url)
+            tab = await browser.get(search_url)
             await tab.sleep(Yad2CarFinder._FETCHING_INTERVAL_IN_SECONDS)
-            logger.info("Page loaded")
 
             try:
                 popup_iframe = await Yad2CarFinder._poll_for_elements(
@@ -229,74 +334,59 @@ class Yad2CarFinder:
                 Yad2CarFinder._CAPTCHA_TIMEOUT_IN_SECONDS,
                 Yad2CarFinder._POLL_INTERVAL_IN_SECONDS,
             )
-            if not has_results:
-                return []
-
-            logger.info("Scrolling to load results feed")
-            await Yad2CarFinder._scroll_to_results_feed(tab)
-
-            results_found = await Yad2CarFinder._poll_for_elements(
-                tab, Yad2CarFinder._RESULTS_FEED_SELECTOR, timeout=10
-            )
-            if not results_found:
-                logger.warning("Results feed not found after scrolling")
-
-            max_pages = 1
-            try:
-                pagination = await Yad2CarFinder._query_elements(
-                    tab, f"{Yad2CarFinder._PAGINATION_SELECTOR} ol li a"
-                )
-                if pagination:
-                    last_text = pagination[-1].text.strip()
-                    if last_text.isdigit():
-                        max_pages = int(last_text)
-                        logger.info("Pagination detected", max_pages=max_pages)
-            except (ValueError, Exception):
-                logger.info("No pagination found, assuming single page")
 
             listings: dict[str, CarListing] = {}
-
-            for page_number in range(1, max_pages + 1):
-                if page_number > 1:
-                    separator = "?" if car_search_url == Yad2CarFinder._BASE_CAR_SEARCH_URL else "&"
-                    page_url = f"{car_search_url}{separator}page={page_number}"
-
-                    logger.info("Loading page", page=page_number, url=page_url)
-                    await tab.get(page_url)
-                    await tab.sleep(Yad2CarFinder._FETCHING_INTERVAL_IN_SECONDS)
-
-                    has_results = await Yad2CarFinder._wait_for_page_load(
-                        tab,
-                        Yad2CarFinder._PAGE_LOAD_TIMEOUT_IN_SECONDS,
-                        Yad2CarFinder._CAPTCHA_TIMEOUT_IN_SECONDS,
-                        Yad2CarFinder._POLL_INTERVAL_IN_SECONDS,
-                    )
-                    if not has_results:
+            if has_results:
+                max_pages = await Yad2CarFinder._fetch_page_results(tab, listings)
+                if max_pages == 0:
+                    max_pages = await Yad2CarFinder._dom_page_count(tab)
+                logger.info("Page scraped", page=f"1/{max_pages}", total_results=len(listings))
+                separator = "&" if "?" in search_url else "?"
+                for page_number in range(2, max_pages + 1):
+                    page_url = f"{search_url}{separator}page={page_number}"
+                    if not await self._load_results_page(tab, page_url):
                         break
-
-                    await Yad2CarFinder._scroll_to_results_feed(tab)
-                    await Yad2CarFinder._poll_for_elements(
-                        tab, Yad2CarFinder._RESULTS_FEED_SELECTOR, timeout=10
+                    await Yad2CarFinder._fetch_page_results(tab, listings)
+                    logger.info(
+                        "Page scraped",
+                        page=f"{page_number}/{max_pages}",
+                        total_results=len(listings),
                     )
 
-                await Yad2CarFinder._fetch_page_results(tab, listings)
-                logger.info(
-                    "Page scraped",
-                    page=f"{page_number}/{max_pages}",
-                    total_results=len(listings),
+            for listing in Yad2CarFinder._needs_details(list(listings.values()), plan):
+                details = await Yad2CarFinder._fetch_details(tab, listing)
+                if details is not None:
+                    listings[listing.url] = details
+
+            removed, left_search = [], []
+            for url in sorted(plan.previous_urls - listings.keys()):
+                known = plan.known.get(url)
+                details = await Yad2CarFinder._fetch_details(
+                    tab, CarListing(url, "Car listing", known.price if known else None)
                 )
+                if details is None:
+                    removed.append(url)
+                elif details.detailed:
+                    left_search.append(details)
 
-            previous_prices = previous_prices or {}
-            for url, listing in list(listings.items()):
-                previous_price = previous_prices.get(url)
-                if url not in previous_prices or (
-                    listing.price is not None
-                    and previous_price is not None
-                    and listing.price < previous_price
-                ):
-                    listings[url] = await Yad2CarFinder._fetch_details(tab, listing)
-
-            logger.info("Scraping complete", results_collected=len(listings))
-            return list(listings.values())
+            logger.info(
+                "Scraping complete",
+                results_collected=len(listings),
+                removed=len(removed),
+                left_search=len(left_search),
+            )
+            return ScanOutput(list(listings.values()), removed, left_search)
         finally:
             browser.stop()
+
+    @staticmethod
+    async def _dom_page_count(tab: uc.Tab) -> int:
+        try:
+            pagination = await Yad2CarFinder._query_elements(
+                tab, f"{Yad2CarFinder._PAGINATION_SELECTOR} ol li a"
+            )
+            if pagination and pagination[-1].text.strip().isdigit():
+                return int(pagination[-1].text.strip())
+        except Exception:
+            logger.info("No pagination found, assuming single page")
+        return 1

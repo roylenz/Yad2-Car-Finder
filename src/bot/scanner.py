@@ -1,48 +1,36 @@
 """Scheduled listing scans and Telegram change alerts."""
 
 import asyncio
-from dataclasses import replace
 import os
 from typing import Callable
 
 from car.car_finder import Yad2CarFinder
-from car.listing import CarListing
+from car.listing import CarListing, ScanOutput, ScanPlan
 from common.exceptions import CustomException
 from common.logger import logger
 from telegram.ext import ContextTypes, JobQueue
 
 from bot.state import BotState
+from storage.db import utcnow
+from tracking.tracker import AdTracker, detect_changes  # noqa: F401 (re-exported)
 
 LISTINGS_PER_MESSAGE = 5
 
 
-def _run_scraper_sync(search_url: str, previous_prices: dict[str, int | None]) -> list[CarListing]:
+def _run_scraper_sync(search_url: str, plan: ScanPlan) -> ScanOutput:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        return loop.run_until_complete(Yad2CarFinder().find(search_url, previous_prices))
+        return loop.run_until_complete(Yad2CarFinder().find(search_url, plan))
     finally:
         loop.close()
 
 
-def detect_changes(
-    previous: dict[str, CarListing], current: list[CarListing]
-) -> tuple[list[CarListing], list[tuple[CarListing, int]]]:
-    new = []
-    drops = []
-    for listing in current:
-        old = previous.get(listing.url)
-        if old is None:
-            new.append(listing)
-        elif old.price is not None and listing.price is not None and listing.price < old.price:
-            listing = replace(
-                listing,
-                km=listing.km if listing.km is not None else old.km,
-                hand=listing.hand if listing.hand is not None else old.hand,
-                year=listing.year if listing.year is not None else old.year,
-            )
-            drops.append((listing, old.price))
-    return new, drops
+def _listed_for(listing: CarListing) -> str | None:
+    if listing.listed_at is None:
+        return None
+    days = (utcnow() - listing.listed_at).days
+    return "today" if days < 1 else f"{days} day{'s' if days != 1 else ''} ago"
 
 
 def format_listing(listing: CarListing, previous_price: int | None = None) -> str:
@@ -53,10 +41,21 @@ def format_listing(listing: CarListing, previous_price: int | None = None) -> st
     mileage = f"{listing.km:,} km" if listing.km is not None else "Not listed"
     hand = str(listing.hand) if listing.hand is not None else "Not listed"
     year = str(listing.year) if listing.year is not None else "Not listed"
-    return (
-        f"{heading}: {listing.title}\nYear: {year}\nPrice: {price}\nMileage: {mileage}\n"
-        f"Hand: {hand}\n{listing.url}"
-    )
+    lines = [
+        f"{heading}: {listing.title}",
+        f"Year: {year}",
+        f"Price: {price}",
+        f"Mileage: {mileage}",
+        f"Hand: {hand}",
+    ]
+    listed = _listed_for(listing)
+    if listed:
+        lines.append(f"Listed: {listed}")
+    lines.append(listing.url)
+    dashboard_url = os.getenv("DASHBOARD_URL", "").rstrip("/")
+    if dashboard_url:
+        lines.append(f"History: {dashboard_url}/ads/{listing.token}")
+    return "\n".join(lines)
 
 
 def schedule_scan(
@@ -87,6 +86,8 @@ def schedule_scan(
 class Scanner:
     def __init__(self, state: BotState | None = None) -> None:
         self.state = state or BotState()
+        self.tracker = AdTracker(self.state.ads)
+        self.on_scan_complete: Callable[[], None] = lambda: None
         self._scan_locks: dict[int, asyncio.Lock] = {}
         self.access_check: Callable[[int], bool] = lambda _chat_id: True
         self.max_concurrent_scans = int(os.getenv("MAX_CONCURRENT_SCANS", "2"))
@@ -173,13 +174,11 @@ class Scanner:
     async def _run_scan(
         self, context: ContextTypes.DEFAULT_TYPE, chat_id: int, url: str, one_time: bool
     ) -> None:
-        previous = self.state.previous_listings(chat_id)
+        plan = self.tracker.plan(chat_id)
         try:
             logger.info("Scan started", chat_id=chat_id, search_url=url)
-            results = await asyncio.to_thread(
-                _run_scraper_sync, url, {link: item.price for link, item in previous.items()}
-            )
-            logger.info("Scan completed", chat_id=chat_id, results_count=len(results))
+            output = await asyncio.to_thread(_run_scraper_sync, url, plan)
+            logger.info("Scan completed", chat_id=chat_id, results_count=len(output.listings))
         except CustomException as error:
             logger.error("Scan failed", chat_id=chat_id, error_code=error.error_code, message=error.message)
             await self._send_safe(context, chat_id, f"⚠️ Scan failed: {error.message}")
@@ -191,21 +190,26 @@ class Scanner:
 
         active = self.state.get_search(chat_id)
         if active is None or active[0] != url or not self.access_check(chat_id):
+            # Keep what the scan learned about the ads, without alert state for this chat.
+            self.state.ads.record(output.listings + output.left_search)
+            self.state.ads.mark_removed(output.removed)
+            self.on_scan_complete()
             return
 
-        new, drops = detect_changes(previous, results)
-        if new:
-            await self._send_safe(context, chat_id, f"🚗 {len(new)} new car(s) found")
-            await self._send_listings(context, chat_id, [format_listing(item) for item in new])
-        if drops:
-            await self._send_safe(context, chat_id, f"📉 {len(drops)} price drop(s) found")
+        result = self.tracker.apply(chat_id, output)
+        self.on_scan_complete()
+        if result.new:
+            await self._send_safe(context, chat_id, f"🚗 {len(result.new)} new car(s) found")
+            await self._send_listings(context, chat_id, [format_listing(item) for item in result.new])
+        if result.drops:
+            await self._send_safe(context, chat_id, f"📉 {len(result.drops)} price drop(s) found")
             await self._send_listings(
-                context, chat_id, [format_listing(item, old_price) for item, old_price in drops]
+                context,
+                chat_id,
+                [format_listing(item, old_price) for item, old_price in result.drops],
             )
-        if one_time and not new and not drops:
+        if one_time and not result.new and not result.drops:
             await self._send_safe(context, chat_id, "No new cars or price drops found.")
-
-        self.state.save_listings(chat_id, results)
 
     async def _send_listings(
         self, context: ContextTypes.DEFAULT_TYPE, chat_id: int, messages: list[str]

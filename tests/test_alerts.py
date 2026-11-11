@@ -192,20 +192,20 @@ class ScanQueueTests(unittest.IsolatedAsyncioTestCase):
 
 
 class FeedTests(unittest.IsolatedAsyncioTestCase):
-    async def test_feed_cards_provide_canonical_url_title_and_price(self):
+    async def test_dom_cards_skip_price_drop_badge(self):
         class Tab:
             async def evaluate(self, _expression):
                 return json.dumps(
                     [{
                         "href": "/item/abc?spot=standard",
                         "title": "Test car",
-                        "price": "85,000 ₪",
+                        "prices": ["ירד ב 3,000 ₪", "85,000 ₪"],
                         "text": "Test car\n2021 • יד 2\n85,000 ₪",
                     }]
                 )
 
         listings = {}
-        await Yad2CarFinder._fetch_page_results(Tab(), listings)
+        await Yad2CarFinder._fetch_dom_results(Tab(), listings)
         listing = listings["https://www.yad2.co.il/vehicles/item/abc"]
         self.assertEqual(
             (listing.title, listing.price, listing.hand, listing.year), ("Test car", 85000, 2, 2021)

@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Ads · Yad2 Car Finder{% endblock %}
+{% block head %}
+<style>
+  tr.model-row td { font-weight: 650; padding-top: 16px; }
+  tr.group-row td { background: var(--surface-2); color: var(--text-secondary); font-weight: 600; font-size: 13px; }
+</style>
+{% endblock %}
+{% block content %}
+<h1>Ads <span class="muted">({{ total | number }})</span></h1>
+<form class="filters" method="get">
+  <input type="search" name="q" value="{{ filters.q }}" placeholder="Search model or ad ID">
+  <select name="status">
+    {% for value, label in [("active", "On Yad2"), ("removed", "Removed"), ("all", "All")] %}
+    <option value="{{ value }}" {{ "selected" if filters.status == value }}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <select name="manufacturer" onchange="this.form.model.value=''; if (this.form.sub_model) this.form.sub_model.value=''; this.form.submit()">
+    <option value="">All makes</option>
+    {% for name in manufacturers %}
+    <option value="{{ name }}" {{ "selected" if filters.manufacturer == name }}>{{ name }}</option>
+    {% endfor %}
+  </select>
+  <select name="model" onchange="if (this.form.sub_model) this.form.sub_model.value=''; this.form.submit()">
+    <option value="">All models</option>
+    {% for name in models %}
+    <option value="{{ name }}" {{ "selected" if filters.model == name }}>{{ name }}</option>
+    {% endfor %}
+  </select>
+  {% if sub_models %}
+  <select name="sub_model" style="max-width: 280px">
+    <option value="">All subtypes</option>
+    {% for name in sub_models %}
+    <option dir="rtl" value="{{ name }}" {{ "selected" if filters.sub_model == name }}>{{ name }}</option>
+    {% endfor %}
+  </select>
+  {% endif %}
+  {% if chats %}
+  <select name="chat">
+    <option value="">All searches</option>
+    {% for chat_id in chats %}
+    <option value="{{ chat_id }}" {{ "selected" if filters.chat == chat_id | string }}>Chat {{ chat_id }}</option>
+    {% endfor %}
+  </select>
+  {% endif %}
+  <select name="sort">
+    {% for value, label in sorts.items() %}
+    <option value="{{ value }}" {{ "selected" if filters.sort == value }}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Apply</button>
+</form>
+
+<div class="card scroll">
+  {% if rows %}
+  <table>
+    <thead>
+      <tr>
+        <th></th><th>Car</th><th class="num">Year</th><th class="num hide-sm">Mileage</th>
+        <th class="num hide-sm">Hand</th><th class="num">Price</th><th class="num">Days listed</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for ad in rows %}
+      {% if filters.sort == "model" and (loop.first or ad.model != loop.previtem.model or ad.manufacturer != loop.previtem.manufacturer) %}
+      <tr class="model-row"><td colspan="7"><bdi>{{ ad.manufacturer or "" }} {{ ad.model or "" }}</bdi></td></tr>
+      {% endif %}
+      {% if filters.sort == "model" and (loop.first or ad.sub_model != loop.previtem.sub_model or ad.model != loop.previtem.model) %}
+      <tr class="group-row"><td colspan="7"><bdi dir="rtl">{{ ad.sub_model or "Unknown subtype" }}</bdi></td></tr>
+      {% endif %}
+      <tr>
+        <td>
+          <a href="/ads/{{ ad.token }}">
+          {% if ad.cover %}<img class="thumb" src="/thumbs/{{ ad.cover }}" alt="" loading="lazy">{% else %}<div class="thumb"></div>{% endif %}
+          </a>
+        </td>
+        <td>
+          <a href="/ads/{{ ad.token }}" dir="auto">{{ ad.title }}</a>
+          <div class="muted"><bdi dir="rtl">{{ ad.sub_model or "" }}</bdi></div>
+          {% if ad.removed_at %}<span class="badge removed">Removed {{ ad.removed_at | when }}</span>{% endif %}
+        </td>
+        <td class="num">{{ ad.year or "—" }}</td>
+        <td class="num hide-sm">{{ ad.km | number }}</td>
+        <td class="num hide-sm">{{ ad.hand or "—" }}</td>
+        <td class="num">
+          {{ ad.price | shekels }}
+          {% if ad.first_price and ad.price and ad.price < ad.first_price %}
+          <div><span class="badge drop">▼ {{ (ad.first_price - ad.price) | shekels }}</span></div>
+          {% endif %}
+        </td>
+        <td class="num">{{ days_listed(ad) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No ads match these filters.</p>
+  {% endif %}
+</div>
+{% if pages > 1 %}
+<div class="pager">
+  {% if page > 1 %}<a href="?{{ query }}&page={{ page - 1 }}">← Previous</a>{% endif %}
+  <span class="muted">Page {{ page }} of {{ pages }}</span>
+  {% if page < pages %}<a href="?{{ query }}&page={{ page + 1 }}">Next →</a>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

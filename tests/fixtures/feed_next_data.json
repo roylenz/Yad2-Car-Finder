@@ -1,0 +1,61 @@
+{
+  "props": {
+    "pageProps": {
+      "dehydratedState": {
+        "queries": [
+          {
+            "queryKey": ["feed-mix", "vehicles", "cars", {"manufacturer": "19"}],
+            "state": {
+              "data": {
+                "ads": [
+                  {
+                    "token": "6rg1e7dp",
+                    "adType": "private",
+                    "price": 86000,
+                    "address": {"area": {"id": 85, "text": "אזור הנגב המערבי"}},
+                    "metaData": {
+                      "coverImage": "https://img.yad2.co.il/Pic/202610/06/1_1/o/a1.jpeg",
+                      "images": [
+                        "https://img.yad2.co.il/Pic/202610/06/1_1/o/a1.jpeg",
+                        "https://img.yad2.co.il/Pic/202610/06/1_1/o/a2.jpeg"
+                      ],
+                      "priceBeforeTag": 89000
+                    },
+                    "tags": [{"name": "היברידי", "id": 4, "priority": 1}],
+                    "manufacturer": {"id": 19, "text": "טויוטה"},
+                    "model": {"id": 10226, "text": "קורולה"},
+                    "subModel": {"id": 104253, "text": "Space היברידי אוט׳ 1.8 (98 כ״ס)"},
+                    "vehicleDates": {"yearOfProduction": 2019},
+                    "engineType": {"id": 2101, "text": "היברידי בנזין"},
+                    "engineVolume": 1798,
+                    "hand": {"id": 2, "text": "יד שניה"},
+                    "createdAt": "2026-11-09T15:48:38"
+                  }
+                ],
+                "platinum": [
+                  {
+                    "token": "6rg1e7dp",
+                    "price": 86000,
+                    "metaData": {}
+                  },
+                  {
+                    "token": "p1atinum",
+                    "price": 120000,
+                    "metaData": {"coverImage": "https://img.yad2.co.il/Pic/x/o/p1.jpeg"},
+                    "manufacturer": {"text": "מאזדה"},
+                    "model": {"text": "3"},
+                    "hand": {"id": 1},
+                    "vehicleDates": {"yearOfProduction": 2022}
+                  }
+                ],
+                "boost": [],
+                "solo": [],
+                "pagination": {"pages": 3, "perPage": 40, "total": 81}
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

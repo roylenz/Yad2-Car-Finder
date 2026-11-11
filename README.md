@@ -5,8 +5,13 @@ Telegram bot that scrapes [Yad2](https://www.yad2.co.il/vehicles/cars) for car l
 - **Interactive configuration** - configure manufacturer, model, year range via inline keyboard buttons in Telegram
 - **Periodic scanning** - automatically checks for new listings every X minutes (configurable: 5/10/15/30/60) or run a one-time scan
 - **Search URL alerts** - send a filtered Yad2 car search URL directly to the bot; it checks every 10 minutes
-- **New car and price drop alerts** - messages include the listing year, price, mileage, hand (number of previous owners), and link
-- **Persistent tracking** - searches and last seen prices survive container restarts
+- **New car and price drop alerts** - messages include the listing year, price, mileage, hand (number of previous owners), how long the ad has been listed, and links to Yad2 and the ad's dashboard page
+- **Ad archive** - every ad any search finds is kept with every detail Yad2 has: mileage, mileage at the last test, last test date, test validity, when it went on the road, ownership history, which fields the Ministry of Transport verified, engine and powertrain, safety and pollution ratings, full equipment list, city, description and more (new Yad2 fields are kept automatically), its full price and change history, when Yad2 posted it, and when it was removed. Stopping a search keeps the history
+- **Photo archive** - all photos of every ad are downloaded at Yad2's original size and kept after the ad is gone (stored once even if re-posted)
+- **Accurate price drops** - prices come from the JSON Yad2 embeds in its pages, not from card text, so a "dropped by ₪3,000" badge is never mistaken for the price. Implausible drops (over 50% or under ₪5,000) are logged and not alerted
+- **Dashboard** - web pages for an overview, an ad list you can filter by make, model and subtype and sort by model, each ad's photos, details, price chart and change log, and a market view that plots every subtype of a model (or every model) by price plus a price-vs-mileage/year chart; public through Cloudflare Tunnel with Cloudflare Access login
+- **Pluggable processors** - a small interface for running models (e.g. licence-plate recognition) over archived ads and photos; results show on the dashboard
+- **Persistent tracking** - searches, alert state and the archive survive container restarts
 - **Bounded concurrent scans** - a shared queue runs at most `MAX_CONCURRENT_SCANS` browser scans at once (default 2)
 - **Private access** - users request access with their name; admins approve requests and can promote other admins
 - **Structured logging** - colored console output with structured JSON kwargs, configurable log level via `LOG_LEVEL` env var
@@ -38,9 +43,10 @@ commands with `sudo`.
 The image includes Chromium and runs it on a virtual X display as a non-root user. It works
 on ARM64 Raspberry Pi OS and x86-64 Linux. The bot uses Telegram polling, so no
 ports need to be published. Only run one instance for a given token. Docker Compose
-stores active searches and listing prices in the `bot_data` volume.
-Each private chat has its own saved search and listing history. Alerts are sent
-only to the chat that created the search. When several scans become due together,
+stores the database and photos in the `bot_data` volume, or in the host folder set by
+`HOST_DATA_DIR` (use an SSD on a Raspberry Pi).
+Each private chat has its own saved search and alert state; the ad archive is shared, so an
+ad found by two searches is stored once. Alerts are sent only to the chat that created the search. When several scans become due together,
 they wait in a FIFO queue; repeated triggers for the same search do not pile up.
 Set `MAX_CONCURRENT_SCANS` in `.env` to adjust the number of browser scans allowed
 at once. `/status` shows whether your search is queued, running, or waiting.
@@ -107,3 +113,49 @@ mileage, or hand for a car, the alert says "Not listed" for that field.
 3. `/search` - configure a new search (manufacturer, model, year range, scan interval)
 4. `/stop` - stop the active scan
 5. `/status` - show current scan configuration and how many cars have been found
+
+## Ad archive and dashboard
+
+Each scan reads the search results from the JSON in Yad2's page (price, photos, posting time,
+model, year, hand). It opens an ad's own page for new ads, ads whose price changed, ads not
+refreshed in 24 hours (up to 20 per scan), and ads that left the results. That page adds
+mileage and the remaining parameters, and shows whether Yad2 removed the ad. A history row is
+written only when something changes. After each scan, new photos are downloaded and the
+enabled processors run in the background.
+
+| Setting (`.env`) | Purpose |
+| --- | --- |
+| `HOST_DATA_DIR` | Host folder for the database and photos (Compose) |
+| `DATA_DIR` | Data folder inside the app (default `data`; Compose sets `/app/data`) |
+| `DATABASE_URL` | Optional SQLAlchemy URL, e.g. Postgres on Supabase, instead of SQLite |
+| `PROCESSORS` | Comma-separated processors to run (default `photo_info`) |
+| `DASHBOARD_URL` | Public dashboard address, used for links in alerts |
+| `COMPOSE_PROFILES` | `dashboard` starts the dashboard; add `tunnel` for Cloudflare Tunnel |
+| `DASHBOARD_BIND`, `DASHBOARD_PORT` | Where the dashboard listens on the host (default `127.0.0.1:8080`) |
+| `DASHBOARD_AUTH=off` | No login; only for a trusted network |
+| `CLOUDFLARE_TUNNEL_TOKEN`, `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` | Tunnel and login, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
+
+To run the dashboard on your own machine without login:
+
+```bash
+DASHBOARD_AUTH=off uvicorn --factory --app-dir src dashboard.app:create_app --port 8000
+```
+
+`DASHBOARD_AUTH=off` is for local use only; deployed, the dashboard requires Cloudflare Access.
+
+### Adding a model
+
+Processors live in `src/processing/processors/`. Subclass `processing.base.Processor`, set
+`name`, `version` and `target` (`"photo"` gets the original image file, `"ad"` gets the ad and
+all its photos), implement `async run(target) -> dict`, register the class in
+`src/processing/registry.py`, and add its name to `PROCESSORS`. Every archived target is
+processed once per version (failures are retried up to 3 times), so bumping `version` re-runs
+it over the whole archive. `photo_info` is a minimal example.
+
+## Tests
+
+```bash
+PYTHONPATH=src uv run --no-project --python 3.12 --with-requirements requirements.txt \
+  python -m unittest discover -s tests
+```
+

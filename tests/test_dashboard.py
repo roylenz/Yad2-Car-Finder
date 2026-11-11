@@ -1,0 +1,145 @@
+import asyncio
+import datetime
+import json
+import tempfile
+import unittest
+from io import BytesIO
+from pathlib import Path
+from unittest.mock import patch
+
+import jwt
+from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi.testclient import TestClient
+from PIL import Image
+
+from bot.state import BotState
+from car import yad2_json
+from car.listing import CarListing, ScanOutput
+from dashboard import auth
+from dashboard.app import create_app
+from storage.photos import LocalPhotoStore
+from tracking.tracker import AdTracker
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+class DashboardTests(unittest.TestCase):
+    def setUp(self):
+        self._directory = tempfile.TemporaryDirectory()
+        directory = Path(self._directory.name)
+        self.state = BotState(str(directory / "bot.sqlite3"))
+        self.store = LocalPhotoStore(directory / "photos")
+        item = yad2_json.item_data(json.loads((FIXTURES / "item_next_data.json").read_text()))
+        listing = yad2_json.listing_from_json(item, detailed=True)
+        tracker = AdTracker(self.state.ads)
+        start = datetime.datetime(2026, 11, 1)
+        tracker.apply(1, ScanOutput([listing]), start)
+        cheaper = CarListing(**{**listing.__dict__, "price": 82000})
+        tracker.apply(1, ScanOutput([cheaper]), start + datetime.timedelta(days=2))
+        tracker.apply(1, ScanOutput([], removed=[listing.url]), start + datetime.timedelta(days=5))
+
+        buffer = BytesIO()
+        Image.new("RGB", (640, 480), "blue").save(buffer, "JPEG")
+        self.sha, key = asyncio.run(self.store.save(buffer.getvalue(), ".jpg"))
+        self.state.ads.photo_stored(1, self.sha, key, len(buffer.getvalue()))
+
+        patcher = patch.dict("os.environ", {"DATA_DIR": str(directory)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.client = TestClient(create_app(self.state.engine, self.store, auth.NoAuth()))
+
+    def tearDown(self):
+        self._directory.cleanup()
+
+    def test_pages_render(self):
+        for path, expected in (
+            ("/", "Price ▼ ₪86,000 → ₪82,000"),
+            ("/ads?status=all", "טויוטה קורולה"),
+            ("/ads?status=removed&sort=price", "Removed"),
+            ("/ads/6rg1e7dp", "Removed from Yad2"),
+            ("/market?x=year", "Median days until removed"),
+        ):
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(expected, response.text)
+        self.assertEqual(self.client.get("/ads/missing").status_code, 404)
+
+    def test_ad_page_shows_test_and_registration_details(self):
+        text = self.client.get("/ads/6rg1e7dp").text
+        for expected in (
+            "On the road since", "10/2019", "Mileage at last test", "143,094 km",
+            "Last test", "09/2026", "Test valid until", "10/2027", "Driven since last test",
+            "1,906 km", "2 of 8", "Reversing camera", "Not fitted", "Warranty months",
+        ):
+            self.assertIn(expected, text)
+        self.assertNotIn("6467260", text)  # seller's customer ID is not shown
+
+    def test_models_and_subtypes(self):
+        second = CarListing(
+            "https://www.yad2.co.il/vehicles/item/second1", "טויוטה קורולה", 70000, 90000,
+            year=2020, manufacturer="טויוטה", model="קורולה", sub_model="Sun היברידי",
+        )
+        AdTracker(self.state.ads).apply(1, ScanOutput([second]))
+        listing = self.client.get("/ads?status=all&sort=model&model=קורולה").text
+        self.assertEqual(listing.count('class="group-row"'), 2)
+        market = self.client.get("/market?manufacturer=טויוטה&model=קורולה").text
+        self.assertIn("Subtypes by price", market)
+        self.assertIn("Sun היברידי", market)
+        self.assertIn("Space היברידי", market)
+        self.assertEqual(market.count('class="strip-dot'), 2)
+        only = self.client.get("/market?manufacturer=טויוטה&model=קורולה&sub_model=Sun היברידי").text
+        self.assertEqual(only.count('"token": '), 1)  # scatter limited to the subtype
+        self.assertIn("Models by price", self.client.get("/market").text)
+
+    def test_photos_and_thumbnails(self):
+        self.assertEqual(self.client.get(f"/photos/{self.sha}").status_code, 200)
+        thumb = self.client.get(f"/thumbs/{self.sha}")
+        self.assertEqual(thumb.headers["content-type"], "image/webp")
+        self.assertEqual(Image.open(BytesIO(thumb.content)).width, 480)
+        self.assertEqual(self.client.get("/photos/../../etc/passwd").status_code, 404)
+        self.assertEqual(self.client.get("/photos/" + "0" * 64).status_code, 404)
+
+
+class AccessTests(unittest.TestCase):
+    def setUp(self):
+        self._directory = tempfile.TemporaryDirectory()
+        self.state = BotState(str(Path(self._directory.name) / "bot.sqlite3"))
+
+    def tearDown(self):
+        self._directory.cleanup()
+
+    def test_unconfigured_auth_fails_closed(self):
+        with patch.dict("os.environ", {"DASHBOARD_AUTH": "cloudflare"}, clear=False):
+            authenticator = auth.from_env() if not _cf_env() else auth.Unconfigured()
+        client = TestClient(create_app(self.state.engine, authenticator=authenticator))
+        self.assertEqual(client.get("/").status_code, 403)
+        self.assertEqual(client.get("/healthz").status_code, 200)
+
+    def test_cloudflare_token_is_verified(self):
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        access = auth.CloudflareAccess("team.cloudflareaccess.com", "aud-tag")
+
+        class Key:
+            def __init__(self, public_key):
+                self.key = public_key
+
+        access._keys = type("Keys", (), {"get_signing_key_from_jwt": lambda _self, _t: Key(key.public_key())})()
+        claims = {"aud": "aud-tag", "iss": "https://team.cloudflareaccess.com", "email": "a@example.com"}
+        good = jwt.encode(claims, key, algorithm="RS256")
+        wrong_audience = jwt.encode({**claims, "aud": "other"}, key, algorithm="RS256")
+
+        client = TestClient(create_app(self.state.engine, authenticator=access))
+        self.assertEqual(client.get("/").status_code, 403)
+        self.assertEqual(client.get("/", headers={"Cf-Access-Jwt-Assertion": wrong_audience}).status_code, 403)
+        self.assertEqual(client.get("/", headers={"Cf-Access-Jwt-Assertion": good}).status_code, 200)
+
+
+def _cf_env() -> bool:
+    import os
+
+    return bool(os.getenv("CF_ACCESS_TEAM_DOMAIN") and os.getenv("CF_ACCESS_AUD"))
+
+
+if __name__ == "__main__":
+    unittest.main()

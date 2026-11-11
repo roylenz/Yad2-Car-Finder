@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+{% block title %}Market · Yad2 Car Finder{% endblock %}
+{% block head %}
+<style>
+  .legend { display: flex; gap: 16px; margin-bottom: 8px; color: var(--text-secondary); font-size: 13px; }
+
+  .strip { display: grid; gap: 2px; }
+  .strip-row { display: grid; grid-template-columns: minmax(140px, 280px) 1fr 36px; gap: 12px; align-items: center; min-height: 30px; }
+  .strip-row.selected { background: var(--surface-2); border-radius: 6px; }
+  .strip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--text-primary); }
+  .strip-track { position: relative; height: 30px; border-bottom: 1px solid var(--grid); }
+  .strip-axis .strip-track { border-bottom: none; height: 20px; }
+  .strip-dot { position: absolute; width: 10px; height: 10px; border-radius: 50%; background: var(--series-1); box-shadow: 0 0 0 2px var(--surface-1); transform: translate(-50%, -50%); }
+  .strip-dot.removed { background: var(--series-2); }
+  .strip-dot:hover, .strip-dot:focus-visible { width: 14px; height: 14px; z-index: 2; outline: none; }
+  .strip-dot::after { content: ""; position: absolute; inset: -6px; }  /* bigger hit target */
+  .strip-median { position: absolute; top: 5px; bottom: 5px; width: 2px; background: var(--text-secondary); transform: translateX(-1px); border-radius: 1px; }
+  .strip-tick { position: absolute; top: 2px; transform: translateX(-50%); font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+  .strip-count { text-align: right; color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .tip { position: fixed; pointer-events: none; z-index: 10; background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 4px 8px; font-size: 12px; color: var(--text-primary); box-shadow: 0 2px 8px rgb(0 0 0 / 0.15); }
+  @media (max-width: 640px) {
+    .strip-row { grid-template-columns: 1fr 28px; }
+    .strip-label { grid-column: 1 / -1; }
+    .strip-axis > span:first-child { display: none; }
+  }
+  .legend .key { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+</style>
+{% endblock %}
+{% block content %}
+<h1>Market</h1>
+<form class="filters" method="get">
+  <select name="manufacturer" onchange="this.form.model.value=''; if (this.form.sub_model) this.form.sub_model.value=''; this.form.submit()">
+    <option value="">All makes</option>
+    {% for name in manufacturers %}
+    <option value="{{ name }}" {{ "selected" if filters.manufacturer == name }}>{{ name }}</option>
+    {% endfor %}
+  </select>
+  <select name="model" onchange="if (this.form.sub_model) this.form.sub_model.value=''; this.form.submit()">
+    <option value="">All models</option>
+    {% for name in models %}
+    <option value="{{ name }}" {{ "selected" if filters.model == name }}>{{ name }}</option>
+    {% endfor %}
+  </select>
+  {% if sub_models %}
+  <select name="sub_model" style="max-width: 280px">
+    <option value="">All subtypes</option>
+    {% for name in sub_models %}
+    <option dir="rtl" value="{{ name }}" {{ "selected" if filters.sub_model == name }}>{{ name }}</option>
+    {% endfor %}
+  </select>
+  {% endif %}
+  <select name="x">
+    <option value="km" {{ "selected" if filters.x == "km" }}>Price vs mileage</option>
+    <option value="year" {{ "selected" if filters.x == "year" }}>Price vs year</option>
+  </select>
+  <button type="submit">Apply</button>
+</form>
+
+<div class="tiles" style="margin-bottom: 16px">
+  <div class="card tile"><div class="label">Ads plotted</div><div class="value">{{ count | number }}</div></div>
+  <div class="card tile"><div class="label">Removed (likely sold)</div><div class="value">{{ removed_count | number }}</div></div>
+  <div class="card tile">
+    <div class="label">Median days until removed</div>
+    <div class="value">{{ median_days if median_days is not none else "—" }}</div>
+  </div>
+</div>
+
+
+<h2>{{ "Subtypes" if by_sub_model else "Models" }} by price</h2>
+<div class="card">
+  {% if groups %}
+  <p class="muted" style="margin: 0 0 12px">
+    Each dot is one ad; the bar marks the median price.
+    {% if by_sub_model %}Click a subtype to plot only it below.{% else %}Choose a model above (or click one) to see its subtypes.{% endif %}
+  </p>
+  <div class="legend">
+    <span><span class="key" style="background: var(--series-1)"></span>On Yad2</span>
+    <span><span class="key" style="background: var(--series-2)"></span>Removed</span>
+  </div>
+  <div class="strip" id="strip">
+    {% for group in groups %}
+    {% set link = "?" ~ ({"manufacturer": group.manufacturer or "", "model": group.model or "", "sub_model": group.sub_model or "", "x": filters.x} | urlencode) %}
+    <div class="strip-row {{ 'selected' if filters.sub_model and filters.sub_model == group.sub_model }}">
+      <a class="strip-label" href="{{ link }}" title="{{ group.name }}"><bdi dir="rtl">{{ group.name }}</bdi></a>
+      <div class="strip-track">
+        <span class="strip-median" style="left: {{ position(group.median_price) }}%"></span>
+        {% for row in group.points %}
+        <a class="strip-dot {{ 'removed' if row.removed_at else '' }}" href="/ads/{{ row.token }}"
+           style="left: {{ position(row.price) }}%; top: calc(50% + {{ (loop.index0 % 3 - 1) * 5 }}px)"
+           data-tip="{{ row.price | shekels }} · {{ row.year or '' }} · {{ row.km | number }} km{{ ' · removed' if row.removed_at else '' }}"
+           aria-label="{{ group.name }}: {{ row.price | shekels }}"></a>
+        {% endfor %}
+      </div>
+      <span class="strip-count">{{ group.points | length }}</span>
+    </div>
+    {% endfor %}
+    <div class="strip-row strip-axis">
+      <span></span>
+      <div class="strip-track">
+        {% for tick in ticks %}<span class="strip-tick" style="left: {{ position(tick) }}%">{{ tick | shekels }}</span>{% endfor %}
+      </div>
+      <span></span>
+    </div>
+  </div>
+  <div class="tip" id="strip-tip" hidden></div>
+  {% else %}
+  <p class="muted">No ads with a price yet.</p>
+  {% endif %}
+</div>
+
+{% if groups %}
+<div class="card scroll" style="margin-top: 12px">
+  <table>
+    <thead>
+      <tr>
+        <th>{{ "Subtype" if by_sub_model else "Model" }}</th>
+        <th class="num">On Yad2</th><th class="num">Removed</th>
+        <th class="num">Cheapest</th><th class="num">Median</th><th class="num">Highest</th>
+        <th class="num hide-sm">Median km</th><th class="num hide-sm">Median year</th>
+        <th class="num hide-sm">Median days to removal</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for group in groups %}
+      {% set ads_link = "/ads?" ~ ({"status": "all", "manufacturer": group.manufacturer or "", "model": group.model or "", "sub_model": group.sub_model or "", "sort": "price"} | urlencode) %}
+      <tr>
+        <td><bdi dir="rtl">{{ group.name }}</bdi></td>
+        <td class="num">{{ group.active }}</td>
+        <td class="num">{{ group.removed }}</td>
+        <td class="num">{{ group.min_price | shekels }}</td>
+        <td class="num">{{ group.median_price | shekels }}</td>
+        <td class="num">{{ group.max_price | shekels }}</td>
+        <td class="num hide-sm">{{ group.median_km | number }}</td>
+        <td class="num hide-sm">{{ group.median_year or "—" }}</td>
+        <td class="num hide-sm">{{ group.median_days if group.median_days is not none else "—" }}</td>
+        <td style="white-space: nowrap"><a href="{{ ads_link }}">Ads →</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<h2>{{ "Price vs mileage" if filters.x == "km" else "Price vs year" }}{% if filters.sub_model %} · <bdi dir="rtl">{{ filters.sub_model }}</bdi>{% endif %}</h2>
+<div class="card">
+  <div class="legend">
+    <span><span class="key" style="background: var(--series-1)"></span>On Yad2</span>
+    <span><span class="key" style="background: var(--series-2)"></span>Removed</span>
+  </div>
+  <div class="chart-box" style="height: 420px"><canvas id="market-chart" role="img" aria-label="Price against {{ 'mileage' if filters.x == 'km' else 'year' }}"></canvas></div>
+  <p class="muted" style="margin: 8px 0 0">Click a point to open the ad.</p>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  (() => {
+    const tip = document.getElementById("strip-tip");
+    const strip = document.getElementById("strip");
+    if (!tip || !strip) return;
+    const show = (dot) => {
+      tip.textContent = dot.dataset.tip;
+      tip.hidden = false;
+      const box = dot.getBoundingClientRect();
+      tip.style.left = Math.min(box.left, window.innerWidth - tip.offsetWidth - 8) + "px";
+      tip.style.top = (box.top - tip.offsetHeight - 6) + "px";
+    };
+    strip.addEventListener("mouseover", (event) => { if (event.target.classList.contains("strip-dot")) show(event.target); });
+    strip.addEventListener("focusin", (event) => { if (event.target.classList.contains("strip-dot")) show(event.target); });
+    strip.addEventListener("mouseout", () => { tip.hidden = true; });
+    strip.addEventListener("focusout", () => { tip.hidden = true; });
+  })();
+</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+  const points = {{ points | safe }};
+  const xField = {{ filters.x | tojson }};
+  const css = getComputedStyle(document.documentElement);
+  const token = (name) => css.getPropertyValue(name).trim();
+  const shekels = (value) => "₪" + Number(value).toLocaleString("en-US");
+  const xLabel = (value) => xField === "km" ? Number(value).toLocaleString("en-US") + " km" : String(value);
+  const series = (removed, color) => ({
+    label: removed ? "Removed" : "On Yad2",
+    data: points.filter((point) => point.removed === removed).map((point) => ({ x: point.x, y: point.price, point })),
+    backgroundColor: token(color),
+    borderColor: token("--surface-1"),
+    borderWidth: 2,
+    pointRadius: 5,
+    pointHoverRadius: 7,
+    pointHitRadius: 8,
+  });
+  new Chart(document.getElementById("market-chart"), {
+    type: "scatter",
+    data: { datasets: [series(false, "--series-1"), series(true, "--series-2")] },
+    options: {
+      maintainAspectRatio: false,
+      onClick: (_event, elements, chart) => {
+        if (!elements.length) return;
+        const raw = chart.data.datasets[elements[0].datasetIndex].data[elements[0].index];
+        window.location = "/ads/" + raw.point.token;
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => items[0].raw.point.title,
+            label: (item) => {
+              const point = item.raw.point;
+              return [
+                point.sub_model || "",
+                shekels(point.price),
+                [point.year, point.km != null ? point.km.toLocaleString("en-US") + " km" : null].filter(Boolean).join(" · "),
+                (point.removed ? "Removed after " : "Listed ") + point.days + " days",
+              ];
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          ticks: { color: token("--text-secondary"), callback: xLabel, precision: 0 },
+          grid: { color: token("--grid") },
+          border: { color: token("--border") },
+        },
+        y: {
+          ticks: { color: token("--text-secondary"), callback: shekels },
+          grid: { color: token("--grid") },
+          border: { display: false },
+        },
+      },
+    },
+  });
+</script>
+{% endblock %}

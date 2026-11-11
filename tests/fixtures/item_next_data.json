@@ -1,0 +1,152 @@
+{
+  "props": {
+    "pageProps": {
+      "dehydratedState": {
+        "queries": [
+          {
+            "queryKey": [
+              "vehicles",
+              "item",
+              "6rg1e7dp"
+            ],
+            "state": {
+              "data": {
+                "token": "6rg1e7dp",
+                "adNumber": 84269915,
+                "adType": "private",
+                "price": 86000,
+                "address": {
+                  "area": {
+                    "id": 85,
+                    "text": "אזור הנגב המערבי"
+                  },
+                  "city": {
+                    "id": "6100",
+                    "text": "בני ברק"
+                  }
+                },
+                "metaData": {
+                  "images": [
+                    "https://img.yad2.co.il/Pic/202610/06/1_1/o/a1.jpeg",
+                    "https://img.yad2.co.il/Pic/202610/06/1_1/o/a2.jpeg"
+                  ],
+                  "description": "שמורה, טסט לשנה"
+                },
+                "dates": {
+                  "updatedAt": "2026-11-11T21:50:19",
+                  "createdAt": "2026-11-09T15:48:38",
+                  "endsAt": "2026-12-07T00:00:00",
+                  "rebouncedAt": "2026-11-11T23:50:19"
+                },
+                "manufacturer": {
+                  "id": 19,
+                  "text": "טויוטה"
+                },
+                "model": {
+                  "id": 10226,
+                  "text": "קורולה"
+                },
+                "subModel": {
+                  "id": 104253,
+                  "text": "Space היברידי אוט׳ 1.8 (98 כ״ס)"
+                },
+                "color": {
+                  "id": 35,
+                  "text": "לבן שנהב"
+                },
+                "km": 145000,
+                "hand": {
+                  "id": 2,
+                  "text": "יד שניה"
+                },
+                "engineVolume": 1798,
+                "horsePower": 98,
+                "vehicleDates": {
+                  "yearOfProduction": 2019,
+                  "monthOfProduction": {
+                    "id": 10,
+                    "text": "אוקטובר"
+                  },
+                  "testDate": "2027-10-01T00:00:00"
+                },
+                "gearBox": {
+                  "id": 102,
+                  "text": "אוטומטי"
+                },
+                "engineType": {
+                  "id": 2101,
+                  "text": "היברידי בנזין"
+                },
+                "seats": 5,
+                "numberOfDoors": 5,
+                "owner": {
+                  "id": 1,
+                  "text": "פרטית"
+                },
+                "bodyType": {
+                  "id": 3,
+                  "text": "סטיישן / טורר"
+                },
+                "kmInLastTest": 143094,
+                "lastTestDate": "2026-09-01",
+                "powertrainArchitecture": {
+                  "id": 4,
+                  "text": "היברידי מלא"
+                },
+                "carFamilyType": [
+                  {
+                    "id": 2,
+                    "text": "משפחתיים",
+                    "textEng": "Family"
+                  }
+                ],
+                "carTag": [
+                  {
+                    "id": 5,
+                    "text": "היברידי",
+                    "textEng": "Hybrid"
+                  }
+                ],
+                "combinedFuelConsumption": 30.3,
+                "isVerifiedByMt": {
+                  "year": true,
+                  "hand": true,
+                  "owner": true,
+                  "originalOwner": false,
+                  "testDate": true,
+                  "km": true
+                },
+                "originalOwner": {
+                  "id": 13,
+                  "text": "החכר (ליסינג)"
+                },
+                "customer": {
+                  "id": 6467260
+                },
+                "specification": {
+                  "airConditioner": true,
+                  "abs": true,
+                  "airBags": 7,
+                  "reverseCamera": true,
+                  "blindSpotAssist": false,
+                  "ignition": {
+                    "id": 1,
+                    "text": "4X2"
+                  },
+                  "safetyPoints": 2,
+                  "pollutionLevel": 3,
+                  "sunRoof": false
+                },
+                "warrantyMonths": 12,
+                "fuelType": {
+                  "id": 9,
+                  "text": "בנזין"
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

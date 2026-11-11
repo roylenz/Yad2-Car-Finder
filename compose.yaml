@@ -1,15 +1,56 @@
+x-app: &app
+  image: yad2-car-finder:local
+  restart: unless-stopped
+  init: true
+  env_file: .env
+  volumes:
+    # HOST_DATA_DIR (e.g. /mnt/ssd/yad2) stores the database and photos on that host folder.
+    # Unset, the named volume `bot_data` is used as before.
+    - ${HOST_DATA_DIR:-bot_data}:/app/data
+
 services:
   bot:
+    <<: *app
     build: .
-    restart: unless-stopped
-    init: true
-    env_file: .env
     environment:
+      DATA_DIR: /app/data
       CHROME_HEADLESS: "false"
       CHROME_PATH: /usr/bin/chromium
     shm_size: 256mb
-    volumes:
-      - bot_data:/app/data
+
+  # Web dashboard. Enabled with COMPOSE_PROFILES=dashboard in .env.
+  # Published on DASHBOARD_BIND:DASHBOARD_PORT (default 127.0.0.1:8080, i.e. only on this host).
+  # For the home network without login: DASHBOARD_BIND=0.0.0.0 and DASHBOARD_AUTH=off.
+  # For public access, add the `tunnel` profile (Cloudflare Tunnel + Access) and keep auth on.
+  dashboard:
+    <<: *app
+    environment:
+      DATA_DIR: /app/data
+    ports:
+      - "${DASHBOARD_BIND:-127.0.0.1}:${DASHBOARD_PORT:-8080}:8000"
+    command:
+      - uvicorn
+      - --factory
+      - --app-dir
+      - src
+      - dashboard.app:create_app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    depends_on:
+      - bot
+    profiles: [dashboard]
+
+  cloudflared:
+    image: cloudflare/cloudflared:2025.5.0
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - dashboard
+    profiles: [tunnel]
 
 volumes:
   bot_data:
