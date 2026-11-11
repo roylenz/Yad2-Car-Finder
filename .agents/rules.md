@@ -109,6 +109,7 @@ src/
   - `metaData.images` are originals on `img.yad2.co.il` (`/o/` path), downloadable with plain HTTP; pages themselves need the browser (bot protection)
   - Times are Israel local time; store naive UTC
 - Price-drop cards have two `[data-testid=price]` elements; the first is the "ירד ב ..." badge (DOM fallback skips it)
+- Asking prices under 10% of the search's max price (`price=min-max`; else of the highest price in the scan) are placeholders (₪1) or monthly lease payments: archived, but not alerted and left out of market charts (`tracking.tracker.price_floor`)
 
 ## Deployment
 - See `docs/DEPLOYMENT.md` (Raspberry Pi via SSH host `pi`, Docker Compose)

@@ -222,6 +222,7 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
             {
                 "rows": rows,
                 "total": total,
+                "price_floor": queries.ignored_price_floor(engine),
                 "page": page,
                 "pages": max((total + PAGE_SIZE - 1) // PAGE_SIZE, 1),
                 "filters": filters,

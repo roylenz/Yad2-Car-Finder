@@ -84,6 +84,9 @@
         <td class="num hide-sm">{{ ad.hand or "—" }}</td>
         <td class="num">
           {{ ad.price | shekels }}
+          {% if ad.price is not none and ad.price < price_floor %}
+          <div><span class="badge" title="Under 10% of the search's max price: a placeholder or monthly lease price. Not alerted or charted.">Ignored price</span></div>
+          {% endif %}
           {% if ad.first_price and ad.price and ad.price < ad.first_price %}
           <div><span class="badge drop">▼ {{ (ad.first_price - ad.price) | shekels }}</span></div>
           {% endif %}

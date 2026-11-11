@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from sqlalchemy import Engine, and_, func, or_, select, true
 
 from storage.db import utcnow
+from tracking.tracker import price_floor, search_max_price
 from storage.schema import ad_snapshots, ads, analysis_results, chat_ads, photos, scans, searches
 
 SORTS = {
@@ -205,10 +206,23 @@ def _order(sort: str) -> list:
     return [SORTS.get(sort, SORTS["seen"]).nulls_last()]
 
 
+def ignored_price_floor(engine: Engine) -> int:
+    """Asking prices below this are placeholders or lease payments (see tracking.tracker)."""
+    with engine.connect() as db:
+        urls = db.execute(select(searches.c.url)).scalars().all()
+        maxima = [price for price in map(search_max_price, urls) if price]
+        if maxima:
+            return price_floor(max(maxima))
+        highest = db.execute(
+            select(func.max(ads.c.price)).where(ads.c.removed_at.is_(None))
+        ).scalar_one()
+    return price_floor(None, [highest])
+
+
 def market_points(
     engine: Engine, manufacturer: str | None, model: str | None, sub_model: str | None = None
 ) -> list:
-    conditions = [ads.c.price.is_not(None)]
+    conditions = [ads.c.price.is_not(None), ads.c.price >= ignored_price_floor(engine)]
     if manufacturer:
         conditions.append(ads.c.manufacturer == manufacturer)
     if model:

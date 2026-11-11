@@ -22,7 +22,7 @@ from processing.runner import ProcessingRunner
 from storage.photos import LocalPhotoStore
 from storage.schema import ad_snapshots, ads, analysis_results, photos
 from tracking.photo_archiver import PhotoArchiver
-from tracking.tracker import AdTracker, detect_changes
+from tracking.tracker import AdTracker, detect_changes, price_floor, search_max_price
 
 FIXTURES = Path(__file__).parent / "fixtures"
 URL = "https://www.yad2.co.il/vehicles/item/6rg1e7dp"
@@ -201,6 +201,23 @@ class TrackerTests(TempStateTestCase):
         with self.state.engine.connect() as db:
             history = db.execute(select(ad_snapshots.c.price, ad_snapshots.c.changes)).all()
         self.assertEqual([(row.price, row.changes) for row in history], [(100000, None)])
+
+    def test_prices_under_ten_percent_of_search_max_are_ignored(self):
+        url = "https://www.yad2.co.il/vehicles/cars?year=2023--1&price=1-100000&km=-1-40000"
+        self.assertEqual(search_max_price(url), 100000)
+        self.assertIsNone(search_max_price("https://www.yad2.co.il/vehicles/cars?price=50000--1"))
+        self.assertEqual(price_floor(None, [90000, 1, None]), 9000)
+        tracker = AdTracker(self.state.ads)
+        self.state.set_search(1, url, 10)
+        lease = CarListing(URL.replace("6rg1e7dp", "lease001"), "Lease", 5550)
+        placeholder = CarListing(URL.replace("6rg1e7dp", "placehld"), "Ask", 1)
+        real = CarListing(URL, "Car", 90000)
+        result = tracker.apply(1, ScanOutput([lease, placeholder, real]), search_url=url)
+        self.assertEqual(result.new, [real])
+        dropped = CarListing(lease.url, "Lease", 4850)
+        result = tracker.apply(1, ScanOutput([dropped, placeholder, real]), search_url=url)
+        self.assertEqual(result.drops, [])
+        self.assertEqual(self.state.ads.get("lease001").price, 4850)  # still archived
 
     def test_title_spacing_is_not_a_change(self):
         tracker = AdTracker(self.state.ads)

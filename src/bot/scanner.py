@@ -238,7 +238,7 @@ class Scanner:
             self._log_cancelled(scan_id, "Search changed or stopped during the scan")
             return
 
-        result = self.tracker.apply(chat_id, output)
+        result = self.tracker.apply(chat_id, output, search_url=url)
         if scan_id is not None:
             self.scan_log.finished(
                 scan_id,

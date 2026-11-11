@@ -1,7 +1,10 @@
 """Turn a scan of one chat's search into catalog updates and the alerts that chat should get."""
 
 import datetime
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
+
+from urllib.parse import parse_qs, urlsplit
 
 from car.listing import CarListing, ScanOutput, ScanPlan
 from common.logger import logger
@@ -10,6 +13,26 @@ from storage.ads import AdRepository, is_badge_price
 # A "drop" below these is almost certainly a parsing error, not a real price.
 MIN_PLAUSIBLE_PRICE = 5000
 MAX_PLAUSIBLE_DROP_RATIO = 0.5
+# Prices under this share of the search's maximum are placeholders (₪1) or monthly lease
+# payments, not real asking prices: they are archived but not alerted or charted.
+IGNORED_PRICE_RATIO = 0.10
+
+
+def search_max_price(search_url: str) -> int | None:
+    """The upper bound of a Yad2 search's `price=min-max` filter, if it has one."""
+    value = parse_qs(urlsplit(search_url).query).get("price", [""])[0]
+    _, _, upper = value.partition("-")
+    try:
+        upper_price = int(upper)
+    except ValueError:
+        return None
+    return upper_price if upper_price > 0 else None
+
+
+def price_floor(max_price: int | None, prices: Iterable[int | None] = ()) -> int:
+    """Prices below this are ignored: 10% of the search's maximum, else of the highest price."""
+    base = max_price or max((price for price in prices if price), default=0)
+    return int(base * IGNORED_PRICE_RATIO)
 
 
 @dataclass
@@ -62,12 +85,22 @@ class AdTracker:
         return ScanPlan(known=self.ads.known_ads(), previous_urls=self.ads.chat_search_urls(chat_id))
 
     def apply(
-        self, chat_id: int, output: ScanOutput, now: datetime.datetime | None = None
+        self,
+        chat_id: int,
+        output: ScanOutput,
+        now: datetime.datetime | None = None,
+        search_url: str | None = None,
     ) -> ScanResult:
         previous = self.ads.chat_listings(chat_id)
         self.ads.record(output.listings + output.left_search, now)
         self.ads.mark_removed(output.removed, now)
         new, drops = detect_changes(previous, output.listings)
+        floor = price_floor(
+            search_max_price(search_url) if search_url else None,
+            (listing.price for listing in output.listings),
+        )
+        new = [listing for listing in new if listing.price is None or listing.price >= floor]
+        drops = [(listing, old_price) for listing, old_price in drops if listing.price >= floor]
         # Feed results lack mileage; fill alert fields from the catalog (other searches may know).
         new = [self._complete(listing) for listing in new]
         drops = [(self._complete(listing), old_price) for listing, old_price in drops]
