@@ -1,6 +1,7 @@
 """Background work after scans: download new photos, then run processors on them."""
 
 import asyncio
+from collections.abc import Callable
 
 from common.logger import logger
 from processing.registry import enabled_processors
@@ -18,6 +19,9 @@ class BackgroundPipeline:
         self.archiver = PhotoArchiver(ads, store)
         self.runner = ProcessingRunner(ads.engine, store, enabled_processors())
         self.idle_seconds = idle_seconds
+        # Returns True while a scan runs: Yad2's bot check fails when the browser is starved
+        # of CPU (plate models) or Yad2 sees photo downloads mid-scan, so work waits.
+        self.busy: Callable[[], bool] = lambda: False
         self._wake = asyncio.Event()
         self._task: asyncio.Task | None = None
 
@@ -35,9 +39,9 @@ class BackgroundPipeline:
         self._wake.set()
 
     async def run_once(self) -> None:
-        while await self.archiver.run_pending():
+        while not self.busy() and await self.archiver.run_pending():
             pass
-        while await self.runner.run_pending():
+        while not self.busy() and await self.runner.run_pending(paused=self.busy):
             pass
 
     async def _loop(self) -> None:

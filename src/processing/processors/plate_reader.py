@@ -7,6 +7,7 @@ them per ad.
 """
 
 import asyncio
+import os
 import re
 import threading
 
@@ -38,12 +39,20 @@ class PlateReaderProcessor(Processor):
     def models(cls):
         with cls._lock:
             if cls._models is None:
+                import onnxruntime
                 from fast_plate_ocr import LicensePlateRecognizer
                 from open_image_models import create_detector
 
+                def options() -> onnxruntime.SessionOptions:
+                    # Leave CPU for Chromium on the Pi (PLATE_THREADS, default 2 of 4 cores).
+                    session = onnxruntime.SessionOptions()
+                    session.intra_op_num_threads = int(os.getenv("PLATE_THREADS", "2"))
+                    session.inter_op_num_threads = 1
+                    return session
+
                 cls._models = (
-                    create_detector(DETECTOR_MODEL, conf_thresh=0.25),
-                    LicensePlateRecognizer(OCR_MODEL, device="cpu"),
+                    create_detector(DETECTOR_MODEL, conf_thresh=0.25, sess_options=options()),
+                    LicensePlateRecognizer(OCR_MODEL, device="cpu", sess_options=options()),
                 )
             return cls._models
 

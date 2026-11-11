@@ -339,6 +339,15 @@ class ProcessingTests(TempStateTestCase):
 
         self.assertEqual(asyncio.run(ProcessingRunner(self.state.engine, store, [PhotoInfoV2()]).run_pending()), 1)
 
+    def test_processing_pauses_while_a_scan_runs(self):
+        store = LocalPhotoStore(self.directory / "photos")
+        sha, key = asyncio.run(store.save(jpeg(), ".jpg"))
+        self.state.ads.record([CarListing(URL, "Car", 1, images=("https://img/a.jpg",))])
+        self.state.ads.photo_stored(1, sha, key, 10)
+        runner = ProcessingRunner(self.state.engine, store, [PhotoInfoProcessor()])
+        self.assertEqual(asyncio.run(runner.run_pending(paused=lambda: True)), 0)
+        self.assertEqual(asyncio.run(runner.run_pending(paused=lambda: False)), 1)
+
     def test_failing_processor_gives_up_after_three_attempts(self):
         store = LocalPhotoStore(self.directory / "photos")
         sha, key = asyncio.run(store.save(jpeg(), ".jpg"))

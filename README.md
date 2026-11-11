@@ -123,7 +123,8 @@ model, year, hand). It opens an ad's own page for new ads, ads whose price chang
 refreshed in 24 hours (up to 20 per scan), and ads that left the results. That page adds
 mileage and the remaining parameters, and shows whether Yad2 removed the ad. A history row is
 written only when something changes. After each scan, new photos are downloaded and the
-enabled processors run in the background.
+enabled processors run in the background. Background work pauses while a scan runs, so the
+browser has the Pi's CPU (Yad2's bot check fails on a slow browser).
 
 Every scan is logged with its status (queued, running, ok, failed, cancelled, or interrupted
 by a restart), live progress, duration, result counts and error. The dashboard's Scans page

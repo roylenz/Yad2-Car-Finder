@@ -1,5 +1,7 @@
 """Runs enabled processors over archived ads and photos that have no result for their version."""
 
+from collections.abc import Callable
+
 from sqlalchemy import Engine, and_, exists, func, or_, select
 
 from common.logger import logger
@@ -22,11 +24,18 @@ class ProcessingRunner:
         for processor in processors:
             processor.setup(engine)
 
-    async def run_pending(self, limit: int = 50) -> int:
-        """Process up to `limit` targets per processor; return how many results were saved."""
+    async def run_pending(self, limit: int = 50, paused: Callable[[], bool] | None = None) -> int:
+        """Process up to `limit` targets per processor; return how many results were saved.
+
+        `paused` is checked before each target; when it returns True the pass stops early
+        (the bot pauses processing while a scan runs, so the browser has the CPU).
+        """
         done = 0
         for processor in self.processors:
             for target_id, target in self._pending(processor, limit):
+                if paused and paused():
+                    logger.info("Processing paused while a scan runs", results=done)
+                    return done
                 try:
                     result, error = await processor.run(target), None
                 except Deferred as reason:

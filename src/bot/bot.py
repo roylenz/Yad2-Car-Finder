@@ -48,6 +48,7 @@ async def restore_searches(app: Application) -> None:
     scanner.start_workers()
     pipeline = BackgroundPipeline(scanner.state.ads)
     scanner.on_scan_complete = pipeline.wake
+    pipeline.busy = scanner.is_scanning
     pipeline.start()
     app.bot_data["pipeline"] = pipeline
     for chat_id, url, interval in scanner.state.active_searches():

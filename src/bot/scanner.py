@@ -273,6 +273,9 @@ class Scanner:
         if one_time and not result.new and not result.drops:
             await self._send_safe(context, chat_id, "No new cars or price drops found.")
 
+    def is_scanning(self) -> bool:
+        return bool(self._running)
+
     def _log_cancelled(self, scan_id: int | None, reason: str = "Search changed or stopped") -> None:
         if scan_id is not None:
             self.scan_log.cancelled(scan_id, reason)
