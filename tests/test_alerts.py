@@ -13,7 +13,7 @@ from bot.access import AccessControl
 from bot.scanner import Scanner
 from bot.menu import ADMIN_COMMANDS, USER_COMMANDS
 from telegram.ext import ApplicationHandlerStop
-from car.car_finder import Yad2CarFinder
+from car.car_finder import PageLoadError, Yad2CarFinder
 from car.listing import CarListing, KnownAd, ScanPlan
 from car.search_url import normalize_search_url, price_range, split_price, with_price
 
@@ -46,6 +46,80 @@ class FakeFinder(Yad2CarFinder):
         if feed is not None:
             feed["total"] = len(matching)
         return max(-(-len(matching) // self.per_page), 1)
+
+
+class FakeTab:
+    """A browser tab that goes through scripted page states, one per navigation."""
+
+    def __init__(self, navigations: list[list[str]]) -> None:
+        self.navigations, self.current, self.visits = navigations, [], []
+        self.url = "about:blank"
+
+    async def get(self, url):
+        self.visits.append(url)
+        self.current = list(self.navigations.pop(0))
+
+    def _href(self):
+        return self.current[0] if self.current else "about:blank"
+
+    async def evaluate(self, expression):
+        href = self._href()
+        if len(self.current) > 1:
+            self.current.pop(0)  # the page moves on (e.g. a bot check redirecting back)
+        if "location.href" in expression:
+            return json.dumps({"href": href, "title": "t", "text": ""})
+        return False
+
+    async def query_selector_all(self, selector):
+        return ["card"] if self._href().endswith("#results") else []
+
+    async def sleep(self, seconds):
+        pass
+
+    async def save_screenshot(self, path):
+        Path(path).write_bytes(b"png")
+
+
+class PageLoadTests(unittest.TestCase):
+    URL = "https://www.yad2.co.il/vehicles/cars?price=1-100000"
+    OK = "https://www.yad2.co.il/vehicles/cars?price=1-100000#results"
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        patcher = unittest.mock.patch.dict("os.environ", {"DATA_DIR": directory.name})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.failures = Path(directory.name) / "scan-failures"
+        for name, value in (("_CAPTCHA_TIMEOUT_IN_SECONDS", 0.05), ("_PAGE_LOAD_TIMEOUT_IN_SECONDS", 0.05)):
+            patcher = unittest.mock.patch.object(Yad2CarFinder, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def open(self, navigations):
+        tab = FakeTab(navigations)
+        finder = Yad2CarFinder()
+        with unittest.mock.patch("asyncio.sleep", AsyncMock()):
+            return tab, asyncio.run(finder._open(tab, self.URL))
+
+    def test_a_bot_check_that_clears_itself_is_waited_out(self):
+        tab, loaded = self.open([["https://validate.perfdrive.com/?ssa=1", self.OK]])
+        self.assertTrue(loaded)
+        self.assertEqual(len(tab.visits), 1)
+
+    def test_network_errors_are_retried_and_told_apart_from_bot_checks(self):
+        tab, loaded = self.open([["chrome-error://chromewebdata/"], ["chrome-error://chromewebdata/"], [self.OK]])
+        self.assertTrue(loaded)
+        self.assertEqual(len(tab.visits), 3)
+        saved = sorted(path.name for path in self.failures.iterdir())
+        self.assertEqual(len(saved), 4)  # screenshot + page state per failure
+        self.assertTrue(all("network_error" in name for name in saved))
+
+    def test_gives_up_after_three_attempts(self):
+        with self.assertRaises(PageLoadError) as raised:
+            self.open([["https://validate.perfdrive.com/"]] * 3)
+        self.assertEqual(raised.exception.kind, "bot_check")
+        self.assertIn("Yad2 requested browser validation (validate.perfdrive.com)", raised.exception.message)
 
 
 class PriceSliceTests(unittest.TestCase):

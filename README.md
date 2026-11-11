@@ -19,6 +19,7 @@ Telegram bot that scrapes [Yad2](https://www.yad2.co.il/vehicles/cars) for car l
 - **Pluggable processors** - a small interface for running models over archived ads and photos; results show on the dashboard
 - **Persistent tracking** - searches, alert state and the archive survive container restarts
 - **Every result, not just the first page** - Yad2 serves result pages in two layouts that order ads differently, so paging skips some ads. A search with more results than fit on one page is split into price ranges that each fit on one page, and the scan warns if it still collects fewer ads than Yad2 reports
+- **Retries and failure evidence** - a results page that fails to load is retried after 10 seconds (3 attempts). The bot tells Yad2's bot check apart from a network error or a timeout, waits up to 30 seconds for a bot check to clear by itself, and keeps a screenshot of each failure in `data/scan-failures/`
 - **Bounded concurrent scans** - a shared queue runs at most `MAX_CONCURRENT_SCANS` browser scans at once (default 2)
 - **Private access** - users request access with their name; admins approve requests and can promote other admins
 - **Structured logging** - colored console output with structured JSON kwargs, configurable log level via `LOG_LEVEL` env var

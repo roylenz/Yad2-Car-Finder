@@ -7,6 +7,7 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import replace
+from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
 import nodriver as uc
@@ -18,6 +19,22 @@ from common.exceptions import CustomException, ErrorCode
 from common.logger import logger
 
 
+class PageLoadError(CustomException):
+    """A Yad2 page did not load. `kind`: "bot_check", "network_error" or "timeout"."""
+
+    MESSAGES = {
+        "bot_check": "Yad2 requested browser validation",
+        "network_error": "The Pi could not load Yad2 (network error)",
+        "timeout": "Yad2 results did not load before timeout",
+    }
+
+    def __init__(self, kind: str, state: dict) -> None:
+        self.kind, self.state = kind, state
+        detail = urlsplit(state.get("href") or "").hostname or state.get("href") or "no page"
+        code = ErrorCode.CAPTCHA_TIMEOUT if kind == "bot_check" else ErrorCode.PAGE_LOAD_FAILED
+        super().__init__(f"{self.MESSAGES[kind]} ({detail})", code)
+
+
 class Yad2CarFinder:
     _CHROME_ARGUMENTS = [
         "--disable-gpu",
@@ -27,7 +44,7 @@ class Yad2CarFinder:
     _BASE_CAR_SEARCH_URL = BASE_URL
     _FETCHING_INTERVAL_IN_SECONDS = 1
     _PAGE_LOAD_TIMEOUT_IN_SECONDS = 15
-    _CAPTCHA_TIMEOUT_IN_SECONDS = 120
+    _CAPTCHA_TIMEOUT_IN_SECONDS = 30  # a bot check that clears itself returns to Yad2 by then
     _POLL_INTERVAL_IN_SECONDS = 1
     # Randomised pauses between page loads; loading pages back to back triggers Yad2's bot check.
     _PAGE_PAUSE_IN_SECONDS = (2.5, 5.0)
@@ -87,31 +104,110 @@ class Yad2CarFinder:
             await tab.sleep(poll_interval)
         return []
 
+    # Where the page really is (the tab's cached URL can lag behind), its title and a text sample.
+    _PAGE_STATE_EXPRESSION = """JSON.stringify({
+        href: location.href, title: document.title,
+        text: (document.body?.innerText || "").slice(0, 300)
+    })"""
+
+    @staticmethod
+    async def _page_state(tab: uc.Tab) -> tuple[str, dict]:
+        """Classify the page: "yad2", "loading", "bot_check" (another site, e.g. the bot-check
+        service) or "network_error" (Chromium's own error page: the Pi could not load it)."""
+        try:
+            state = json.loads(await tab.evaluate(Yad2CarFinder._PAGE_STATE_EXPRESSION))
+        except (ProtocolException, TypeError, ValueError):
+            state = {"href": tab.url or "", "title": None, "text": ""}
+        href = state.get("href") or ""
+        parts = urlsplit(href)
+        if parts.scheme == "chrome-error":
+            return "network_error", state
+        if not href or href.startswith(("about:", "data:")):
+            return "loading", state
+        if parts.hostname == "www.yad2.co.il":
+            return "yad2", state
+        return "bot_check", state
+
     @staticmethod
     async def _wait_for_page_load(
         tab: uc.Tab, timeout: int, captcha_timeout: int, poll_interval: float = 1
     ) -> bool:
-        """Return whether results loaded; an empty search is a valid scan result."""
-        deadline = time.monotonic() + timeout + captcha_timeout
-        while time.monotonic() < deadline:
-            if urlsplit(tab.url).hostname != "www.yad2.co.il":
-                raise CustomException("Yad2 requested browser validation", ErrorCode.CAPTCHA_TIMEOUT)
-            if await Yad2CarFinder._query_elements(tab, Yad2CarFinder._PAGE_LOADED_SELECTOR):
-                return True
-            try:
-                no_results = await tab.evaluate(
-                    "document.body?.innerText.includes(\"מה שחיפשת לא נמצא\")"
-                )
-            except ProtocolException:
-                no_results = False
-            if no_results:
-                return False
+        """Return whether results loaded; an empty search is a valid scan result.
+
+        A bot check (another site) often clears itself and returns to Yad2, so it is given
+        `captcha_timeout` seconds before failing. Raises `PageLoadError` with what was seen.
+        """
+        deadline = time.monotonic() + timeout
+        challenge_deadline = None
+        state: dict = {}
+        while True:
+            kind, state = await Yad2CarFinder._page_state(tab)
+            if kind == "network_error":
+                raise PageLoadError("network_error", state)
+            if kind == "bot_check":
+                if challenge_deadline is None:
+                    challenge_deadline = time.monotonic() + captcha_timeout
+                    logger.warning(
+                        "Bot check shown, waiting for it to clear",
+                        host=urlsplit(state.get("href") or "").hostname, title=state.get("title"),
+                    )
+                if time.monotonic() > challenge_deadline:
+                    raise PageLoadError("bot_check", state)
+            elif kind == "yad2":
+                if challenge_deadline is not None:
+                    logger.info("Bot check cleared")
+                    challenge_deadline = None
+                    deadline = time.monotonic() + timeout
+                if await Yad2CarFinder._query_elements(tab, Yad2CarFinder._PAGE_LOADED_SELECTOR):
+                    return True
+                try:
+                    no_results = await tab.evaluate(
+                        "document.body?.innerText.includes(\"מה שחיפשת לא נמצא\")"
+                    )
+                except ProtocolException:
+                    no_results = False
+                if no_results:
+                    return False
+            if challenge_deadline is None and time.monotonic() > deadline:
+                raise PageLoadError("timeout", state)
             await tab.sleep(poll_interval)
 
-        raise CustomException(
-            "Yad2 results did not load before timeout",
-            ErrorCode.CAPTCHA_TIMEOUT,
-        )
+    async def _open(self, tab: uc.Tab, url: str, attempts: int = 3, wait: float = 10) -> bool:
+        """Load a results page, retrying (after `wait` seconds) when it fails to load."""
+        for attempt in range(1, attempts + 1):
+            await tab.get(url)
+            await tab.sleep(Yad2CarFinder._FETCHING_INTERVAL_IN_SECONDS)
+            try:
+                return await Yad2CarFinder._wait_for_page_load(
+                    tab,
+                    Yad2CarFinder._PAGE_LOAD_TIMEOUT_IN_SECONDS,
+                    Yad2CarFinder._CAPTCHA_TIMEOUT_IN_SECONDS,
+                    Yad2CarFinder._POLL_INTERVAL_IN_SECONDS,
+                )
+            except PageLoadError as error:
+                await Yad2CarFinder._save_failure(tab, error, attempt)
+                logger.warning(
+                    "Page failed to load", kind=error.kind, attempt=f"{attempt}/{attempts}",
+                    href=error.state.get("href"), title=error.state.get("title"),
+                )
+                if attempt == attempts:
+                    raise
+                await asyncio.sleep(wait)
+        return False
+
+    @staticmethod
+    async def _save_failure(tab: uc.Tab, error: "PageLoadError", attempt: int) -> None:
+        """Keep a screenshot and the page text of a failed load in DATA_DIR/scan-failures."""
+        try:
+            folder = Path(os.getenv("DATA_DIR", "data")) / "scan-failures"
+            folder.mkdir(parents=True, exist_ok=True)
+            stem = folder / f"{datetime.datetime.now(datetime.UTC):%Y%m%d-%H%M%S}-{error.kind}-{attempt}"
+            stem.with_suffix(".json").write_text(json.dumps(error.state, ensure_ascii=False, indent=1))
+            await tab.save_screenshot(str(stem.with_suffix(".png")))
+            for old in sorted(folder.iterdir())[:-60]:  # keep the latest 30 failures
+                old.unlink(missing_ok=True)
+        except Exception as save_error:  # diagnostics are best effort
+            logger.warning("Could not save the failed page", error=str(save_error))
 
     @staticmethod
     async def _scroll_to_results_feed(tab: uc.Tab) -> None:
@@ -333,14 +429,7 @@ class Yad2CarFinder:
     async def _load_results_page(self, tab: uc.Tab, url: str) -> bool:
         await Yad2CarFinder._pause(Yad2CarFinder._PAGE_PAUSE_IN_SECONDS)
         logger.info("Loading page", url=url)
-        await tab.get(url)
-        await tab.sleep(Yad2CarFinder._FETCHING_INTERVAL_IN_SECONDS)
-        return await Yad2CarFinder._wait_for_page_load(
-            tab,
-            Yad2CarFinder._PAGE_LOAD_TIMEOUT_IN_SECONDS,
-            Yad2CarFinder._CAPTCHA_TIMEOUT_IN_SECONDS,
-            Yad2CarFinder._POLL_INTERVAL_IN_SECONDS,
-        )
+        return await self._open(tab, url)
 
     async def _collect_pages(
         self, tab: uc.Tab, search_url: str, max_pages: int,
@@ -418,12 +507,19 @@ class Yad2CarFinder:
             except Exception:
                 pass
 
-            has_results = await Yad2CarFinder._wait_for_page_load(
-                tab,
-                Yad2CarFinder._PAGE_LOAD_TIMEOUT_IN_SECONDS,
-                Yad2CarFinder._CAPTCHA_TIMEOUT_IN_SECONDS,
-                Yad2CarFinder._POLL_INTERVAL_IN_SECONDS,
-            )
+            try:
+                has_results = await Yad2CarFinder._wait_for_page_load(
+                    tab,
+                    Yad2CarFinder._PAGE_LOAD_TIMEOUT_IN_SECONDS,
+                    Yad2CarFinder._CAPTCHA_TIMEOUT_IN_SECONDS,
+                    Yad2CarFinder._POLL_INTERVAL_IN_SECONDS,
+                )
+            except PageLoadError as error:
+                await Yad2CarFinder._save_failure(tab, error, 1)
+                logger.warning("Page failed to load", kind=error.kind, attempt="1/3",
+                               href=error.state.get("href"), title=error.state.get("title"))
+                await asyncio.sleep(10)
+                has_results = await self._open(tab, search_url, attempts=2)
 
             listings: dict[str, CarListing] = {}
             feed: dict = {}
