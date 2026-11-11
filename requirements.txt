@@ -11,3 +11,6 @@ Jinja2==3.1.6
 pillow==11.2.1
 PyJWT[crypto]==2.10.1
 tzdata==2025.2
+anthropic==2.8.0
+fast-plate-ocr[onnx]==1.1.0
+open-image-models==0.6.0

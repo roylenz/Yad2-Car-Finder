@@ -40,6 +40,8 @@
 - Schema changes: add an Alembic migration in `src/storage/migrations/versions/`; keep SQL portable between SQLite and Postgres (use `storage.db.upsert`)
 - Store times as naive UTC (`storage.db.utcnow()`)
 - Models/analysis go in `src/processing/processors/` as `Processor` subclasses; never call them from the scan path
+- Paid processors (Claude) must be `active_only`, record `usage.cost_usd` in their result and raise `Deferred` when `CLAUDE_MONTHLY_BUDGET_USD` is spent
+- A plate is saved on an ad only once the registry confirms it is the same make/model (OCR errors read as real plates of other cars)
 - One-time scans auto-deactivate after completion
 - Bot token loaded from `.env` via `python-dotenv`
 
@@ -73,7 +75,11 @@ src/
     base.py                  # Processor interface (target "photo" or "ad")
     registry.py              # available processors, PROCESSORS env var
     runner.py                # runs processors once per target and version
+    plates.py                # plate voting/format, data.gov.il registry lookup, ad vs registry comparison
     processors/photo_info.py # sample processor
+    processors/plate_reader.py   # local plate detection + OCR (open-image-models, fast-plate-ocr)
+    processors/plate_registry.py # per-ad plate vote + registry check; writes ads.plate
+    processors/claude_condition.py # Claude Sonnet damage/price-factor check, monthly budget
   dashboard/
     app.py                   # FastAPI app factory (create_app), pages, photo/thumbnail serving
     auth.py                  # Cloudflare Access JWT check (DASHBOARD_AUTH=off for local dev)

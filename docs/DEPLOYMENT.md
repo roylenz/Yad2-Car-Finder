@@ -50,6 +50,22 @@ Your user on the Pi can't access the Docker socket, so run `docker` with `sudo`.
   numbered file for each change; never edit a migration that has already run on the Pi.
 - To change settings, edit `.env` on the Pi and run `sudo docker compose up -d`.
 
+## Claude condition check (API key)
+
+`claude_condition` runs only when `ANTHROPIC_API_KEY` is set in `.env` on the Pi. Create the key
+inside a Console **workspace** (an organization-wide key is rejected without a workspace
+header). Never paste the key into a chat or commit it; add it from your own terminal:
+
+```bash
+ssh -t pi 'cd ~/Yad2-Car-Finder && read -rsp "Workspace API key: " key && echo \
+  && sed -i "/^ANTHROPIC_API_KEY=/d" .env && echo "ANTHROPIC_API_KEY=$key" >> .env && echo saved'
+ssh pi 'cd ~/Yad2-Car-Finder && sudo docker compose up -d'
+```
+
+`CLAUDE_MONTHLY_BUDGET_USD` (default 20) caps what the check spends per calendar month; set a
+spend limit on the workspace in the Console as well. The first run after enabling it checks
+every active ad once (about 3 cents each).
+
 ## First deploy of the ad archive (one time)
 
 This version moves the per-chat `listings` table into the global ad catalog (migration `0002`)

@@ -9,7 +9,7 @@
 {% block content %}
 <h1>Ads <span class="muted">({{ total | number }})</span></h1>
 <form class="filters" method="get">
-  <input type="search" name="q" value="{{ filters.q }}" placeholder="Search model or ad ID">
+  <input type="search" name="q" value="{{ filters.q }}" placeholder="Search model, plate or ad ID">
   <select name="status">
     {% for value, label in [("active", "On Yad2"), ("removed", "Removed"), ("all", "All")] %}
     <option value="{{ value }}" {{ "selected" if filters.status == value }}>{{ label }}</option>
@@ -76,7 +76,11 @@
         </td>
         <td>
           <a href="/ads/{{ ad.token }}" dir="auto">{{ ad.title }}</a>
-          <div class="muted"><bdi dir="rtl">{{ ad.sub_model or "" }}</bdi></div>
+          <div class="muted"><bdi dir="rtl">{{ ad.sub_model or "" }}</bdi>{% if ad.plate %} · <span title="Licence plate{{ ' (registry confirmed)' if ad.plate_status == 'confirmed' }}">{{ ad.plate | plate }}</span>{% endif %}</div>
+          {% set check = conditions.get(ad.token) %}
+          {% if check %}
+          <span class="badge{{ ' removed' if check.high_impact or check.condition == 'poor' else '' }}" title="Claude condition check: {{ check.damage }} damage item(s), {{ check.issues }} price factor(s)">{{ check.condition | capitalize }}{% if check.issues %} · {{ check.issues }} issue{{ "s" if check.issues != 1 }}{% endif %}</span>
+          {% endif %}
           {% if ad.removed_at %}<span class="badge removed">Removed {{ ad.removed_at | when }}</span>{% endif %}
         </td>
         <td class="num">{{ ad.year or "—" }}</td>

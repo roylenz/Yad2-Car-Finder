@@ -10,7 +10,9 @@ Telegram bot that scrapes [Yad2](https://www.yad2.co.il/vehicles/cars) for car l
 - **Photo archive** - all photos of every ad are downloaded at Yad2's original size and kept after the ad is gone (stored once even if re-posted)
 - **Accurate price drops** - prices come from the JSON Yad2 embeds in its pages, not from card text, so a "dropped by ₪3,000" badge is never mistaken for the price. Implausible drops (over 50% or under ₪5,000) are logged and not alerted. Prices under 10% of the search's maximum price (₪1 placeholders, monthly lease prices) are archived but not alerted or charted, and are marked "Ignored price" in the ad list
 - **Dashboard** - web pages for an overview, an ad list you can filter by make, model and subtype and sort by model, each ad's photos, details, price chart and change log, and a market view that plots every subtype of a model (or every model) by price plus a price-vs-mileage/year chart; a scans page with each search's next scan time, the running scan's progress and every past scan's result; public through Cloudflare Tunnel with Cloudflare Access login
-- **Pluggable processors** - a small interface for running models (e.g. licence-plate recognition) over archived ads and photos; results show on the dashboard
+- **Car number per ad** - licence plates are read from the photos on the Pi (local ONNX models, no network) and checked against the Ministry of Transport's vehicle registry on data.gov.il. A confirmed plate is saved on the ad, so other ads of the same car are linked and you can search by plate. The ad page shows the registry record (exact trim, on-road month, last test, ownership, colour, VIN) and where it disagrees with the ad (wrong year, "private" seller whose car is registered to a dealer, ...)
+- **Condition check with Claude** - when an Anthropic API key is set, Claude Sonnet looks at each active ad's photos and description once and lists visible damage and anything that could lower the price (repairs, wear, warning lights, odometer vs advertised km, photos that do not match the ad), with a monthly spending cap
+- **Pluggable processors** - a small interface for running models over archived ads and photos; results show on the dashboard
 - **Persistent tracking** - searches, alert state and the archive survive container restarts
 - **Bounded concurrent scans** - a shared queue runs at most `MAX_CONCURRENT_SCANS` browser scans at once (default 2)
 - **Private access** - users request access with their name; admins approve requests and can promote other admins
@@ -133,7 +135,10 @@ next one is due makes that one skip.
 | `HOST_DATA_DIR` | Host folder for the database and photos (Compose) |
 | `DATA_DIR` | Data folder inside the app (default `data`; Compose sets `/app/data`) |
 | `DATABASE_URL` | Optional SQLAlchemy URL, e.g. Postgres on Supabase, instead of SQLite |
-| `PROCESSORS` | Comma-separated processors to run (default `photo_info`) |
+| `PROCESSORS` | Comma-separated processors to run (default: all of `photo_info`, `plate_reader`, `plate_registry`, `claude_condition`) |
+| `ANTHROPIC_API_KEY` | Enables `claude_condition`. Use a key created in a Console workspace; Max/Ultra plans include monthly API credits |
+| `CLAUDE_MONTHLY_BUDGET_USD` | Spending cap for `claude_condition` per calendar month (default 20); ads wait for next month once it is reached |
+| `CLAUDE_CONDITION_MODEL` | Model for the condition check (default `claude-sonnet-5-5`) |
 | `DASHBOARD_URL` | Public dashboard address, used for links in alerts |
 | `COMPOSE_PROFILES` | `dashboard` starts the dashboard; add `tunnel` for Cloudflare Tunnel |
 | `DASHBOARD_BIND`, `DASHBOARD_PORT` | Where the dashboard listens on the host (default `127.0.0.1:8080`) |
@@ -156,6 +161,18 @@ all its photos), implement `async run(target) -> dict`, register the class in
 `src/processing/registry.py`, and add its name to `PROCESSORS`. Every archived target is
 processed once per version (failures are retried up to 3 times), so bumping `version` re-runs
 it over the whole archive. `photo_info` is a minimal example.
+
+Optional hooks: `requires` (photo processors an ad processor waits for; their results arrive
+in `AdTarget.photo_results`), `active_only` (skip removed ads), `apply(db, target_id, result)`
+(write a result into other tables) and raising `processing.base.Deferred` (leave the target for
+a later pass). The bundled processors:
+
+| Processor | Target | What it does |
+| --- | --- | --- |
+| `photo_info` | photo | Image size and format (example) |
+| `plate_reader` | photo | Finds and reads licence plates with local ONNX models |
+| `plate_registry` | ad | Votes on the plate across the ad's photos, confirms it in the data.gov.il registry, saves it on the ad |
+| `claude_condition` | ad | Claude Sonnet inspects photos and description for damage and price factors (one request per active ad, ~3 cents) |
 
 ## Tests
 

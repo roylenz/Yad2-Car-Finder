@@ -22,4 +22,6 @@ COPY src ./src
 RUN mkdir -p /app/logs /app/data && chown -R bot:bot /app
 
 USER bot
+# Download the licence plate models (~13 MB) into the image so they are not fetched at runtime.
+RUN cd src && python -c "from processing.processors.plate_reader import PlateReaderProcessor as P; P.models()"
 CMD ["xvfb-run", "-a", "python", "src/main.py"]

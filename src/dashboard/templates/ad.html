@@ -17,6 +17,13 @@
   .chip { font-size: 13px; padding: 2px 10px; border-radius: 999px; background: var(--surface-2); color: var(--text-secondary); }
   .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   @media (max-width: 800px) { .two { grid-template-columns: 1fr; } }
+  .plate { display: inline-block; font: 650 22px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 1px;
+    padding: 6px 12px; border-radius: 6px; background: #f6c400; color: #111; border: 2px solid #111; }
+  ul.findings { margin: 0; padding-left: 18px; }
+  ul.findings li { margin: 4px 0; }
+  .impact-high, .sev-major { color: var(--critical); font-weight: 600; }
+  .impact-medium, .sev-moderate { color: var(--series-2); font-weight: 600; }
+  .impact-low, .sev-minor { color: var(--text-secondary); }
 </style>
 {% endblock %}
 {% block content %}
@@ -70,6 +77,90 @@
   {% else %}
   <p class="muted">No photos recorded.</p>
   {% endif %}
+</div>
+
+<div class="two">
+  <div>
+    <h2>Car number</h2>
+    <div class="card">
+      {% if plate and plate.plate %}
+        <span class="plate">{{ plate.plate | plate }}</span>
+        {% if plate.status == "confirmed" %}<span class="badge ok">Confirmed in the vehicle registry</span>
+        {% else %}<span class="badge">Not in the registry dataset</span>{% endif %}
+        {% if plate.discrepancies %}
+        <h3 style="font-size:14px; margin:14px 0 6px">Ad vs registry</h3>
+        <ul class="findings">{% for item in plate.discrepancies %}<li class="impact-medium">{{ item }}</li>{% endfor %}</ul>
+        {% endif %}
+        {% if same_plate %}
+        <h3 style="font-size:14px; margin:14px 0 6px">Other ads of this car</h3>
+        <ul class="findings">
+          {% for other in same_plate %}
+          <li><a href="/ads/{{ other.token }}" dir="auto">{{ other.title }}</a> · {{ other.price | shekels }} · first seen {{ other.first_seen_at | when }}{% if other.removed_at %} · <span class="badge removed">Removed</span>{% endif %}</li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+        {% if plate.registry %}
+        <h3 style="font-size:14px; margin:14px 0 6px">Registry record</h3>
+        <dl class="params">
+          {% for key, label in registry_fields.items() %}{% if plate.registry[key] not in (none, "") %}
+          <dt>{{ label }}</dt><dd><bdi>{{ plate.registry[key] }}</bdi></dd>
+          {% endif %}{% endfor %}
+        </dl>
+        {% endif %}
+      {% elif plate %}
+        <p class="muted" style="margin:0">
+          {% if plate.status == "mismatch" %}A plate was read, but the registry lists it as a different car, so it was not kept.
+          {% elif plate.photos_with_plate %}A plate shows in {{ plate.photos_with_plate }} photo(s) but could not be read reliably (blurred, covered or too small).
+          {% else %}No licence plate visible in the photos.{% endif %}
+        </p>
+      {% else %}
+        <p class="muted" style="margin:0">Not processed yet. Plates are read in the background after photos download.</p>
+      {% endif %}
+    </div>
+  </div>
+  <div>
+    <h2>Condition check <span class="muted">(Claude)</span></h2>
+    <div class="card">
+      {% if condition and condition.overall_condition %}
+        <p style="margin:0 0 8px"><span class="badge">{{ condition.overall_condition | capitalize }} condition</span>
+          {% if condition.photos_match_ad == "no" %}<span class="badge removed">Photos may not match the ad</span>{% endif %}</p>
+        <p style="margin:0 0 10px">{{ condition.summary }}</p>
+        {% if condition.price_factors %}
+        <h3 style="font-size:14px; margin:12px 0 6px">Could lower the price</h3>
+        <ul class="findings">
+          {% for level in ("high", "medium", "low") %}{% for factor in condition.price_factors if factor.impact == level %}
+          <li><span class="impact-{{ factor.impact }}">{{ factor.impact | capitalize }}</span> · {{ factor.issue }} <span class="muted">({{ factor.evidence }})</span></li>
+          {% endfor %}{% endfor %}
+        </ul>
+        {% endif %}
+        {% if condition.damage %}
+        <h3 style="font-size:14px; margin:12px 0 6px">Visible damage</h3>
+        <ul class="findings">
+          {% for item in condition.damage %}
+          <li><span class="sev-{{ item.severity }}">{{ item.severity | capitalize }}</span> · {{ item.location }}: {{ item.description }}
+            {% if photo_numbers.get(item.photo) %}<a href="/photos/{{ photo_numbers[item.photo] }}" target="_blank">photo {{ item.photo }}</a>{% else %}<span class="muted">photo {{ item.photo }}</span>{% endif %}</li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+        {% if condition.odometer_km %}
+        <p style="margin:12px 0 0">Odometer in photo {{ condition.odometer_photo or "" }}: <strong>{{ condition.odometer_km | number }} km</strong>
+          {% if ad.km %}<span class="muted">(ad says {{ ad.km | number }} km)</span>{% endif %}</p>
+        {% endif %}
+        {% if condition.positives %}
+        <h3 style="font-size:14px; margin:12px 0 6px">Positives</h3>
+        <ul class="findings">{% for item in condition.positives %}<li>{{ item }}</li>{% endfor %}</ul>
+        {% endif %}
+        {% if condition.match_notes %}<p class="muted" style="margin:12px 0 0">{{ condition.match_notes }}</p>{% endif %}
+        <p class="muted" style="margin:12px 0 0; font-size:12px">{{ condition.model }} · {{ condition.photos_sent }} of {{ condition.photos_total }} photos · ${{ "%.3f" | format(condition.usage.cost_usd) }}. AI observations from photos; check in person.</p>
+      {% elif condition and condition.skipped %}
+        <p class="muted" style="margin:0">{{ condition.skipped }}.</p>
+      {% elif ad.removed_at %}
+        <p class="muted" style="margin:0">Not checked: the ad was removed before the check ran.</p>
+      {% else %}
+        <p class="muted" style="margin:0">Not checked yet. Active ads are checked in the background when an Anthropic API key is set.</p>
+      {% endif %}
+    </div>
+  </div>
 </div>
 
 <div class="two">

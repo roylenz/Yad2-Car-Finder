@@ -87,6 +87,10 @@ ads = Table(
     Column("last_seen_at", DateTime, nullable=False),
     Column("removed_at", DateTime),
     Column("details_fetched_at", DateTime),
+    # Licence plate read from the photos (processing/processors/plate_registry.py).
+    Column("plate", String(8)),
+    Column("plate_status", String(16)),  # "confirmed" (found in the registry) or "unverified"
+    Index("ix_ads_plate", "plate"),
 )
 
 # Price and parameter history. A row is written only when something changes.

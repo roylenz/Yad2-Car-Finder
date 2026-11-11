@@ -17,6 +17,7 @@ from PIL import Image
 from sqlalchemy import Engine
 
 from dashboard import auth, fields, queries
+from processing import plates
 from storage.db import data_dir, default_database_url, get_engine, utcnow
 from storage.photos import LocalPhotoStore
 
@@ -157,7 +158,7 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
     templates = Jinja2Templates(directory=_TEMPLATES)
     templates.env.filters.update(
         shekels=_shekels, number=_number, when=_when, change_summary=_change_summary,
-        param=_param, local=_local, until=_until,
+        param=_param, local=_local, until=_until, plate=plates.format_plate,
     )
     templates.env.globals["duration"] = _duration
     templates.env.globals["days_listed"] = queries.days_listed
@@ -223,6 +224,7 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
                 "rows": rows,
                 "total": total,
                 "price_floor": queries.ignored_price_floor(engine),
+                "conditions": queries.condition_summaries(engine, [row.token for row in rows]),
                 "page": page,
                 "pages": max((total + PAGE_SIZE - 1) // PAGE_SIZE, 1),
                 "filters": filters,
@@ -251,7 +253,7 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
         detail = queries.ad_detail(engine, token)
         if detail is None:
             raise HTTPException(404, "Ad not found")
-        ad, history, ad_photos, results, chats = detail
+        ad, history, ad_photos, results, chats, same_plate = detail
         price_points = [
             {"t": row.observed_at.isoformat(), "price": row.price}
             for row in history
@@ -268,6 +270,16 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
                 "photos": ad_photos,
                 "results": results,
                 "chats": chats,
+                "same_plate": same_plate,
+                "plate": queries.latest_result(results, "plate_registry"),
+                "condition": queries.latest_result(results, "claude_condition"),
+                "registry_fields": plates.REGISTRY_FIELDS,
+                "photo_numbers": {
+                    number: photo.sha256
+                    for number, photo in enumerate(
+                        [photo for photo in ad_photos if photo.sha256], 1
+                    )
+                },
                 "detail_groups": fields.detail_groups(ad.attributes),
                 "equipment": fields.equipment(ad.attributes),
                 "price_points": json.dumps(price_points),

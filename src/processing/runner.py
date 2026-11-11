@@ -3,7 +3,7 @@
 from sqlalchemy import Engine, and_, exists, func, or_, select
 
 from common.logger import logger
-from processing.base import AdTarget, PhotoTarget, Processor
+from processing.base import AdTarget, Deferred, PhotoTarget, Processor
 from storage.ads import AdRepository
 from storage.db import upsert, utcnow
 from storage.photos import PhotoStore
@@ -19,6 +19,8 @@ class ProcessingRunner:
         self.store = store
         self.processors = processors
         self.ads = AdRepository(engine)
+        for processor in processors:
+            processor.setup(engine)
 
     async def run_pending(self, limit: int = 50) -> int:
         """Process up to `limit` targets per processor; return how many results were saved."""
@@ -27,6 +29,9 @@ class ProcessingRunner:
             for target_id, target in self._pending(processor, limit):
                 try:
                     result, error = await processor.run(target), None
+                except Deferred as reason:
+                    logger.info("Processor deferred", processor=processor.name, reason=str(reason))
+                    break
                 except Exception as exception:
                     result, error = None, f"{type(exception).__name__}: {exception}"
                     logger.warning(
@@ -64,17 +69,37 @@ class ProcessingRunner:
                 return [
                     (row.sha256, PhotoTarget(row.sha256, self.store.path(row.path))) for row in rows
                 ]
-            tokens = db.execute(
-                select(ads.c.token)
-                .where(
-                    ~self._finished(processor, ads.c.token),
-                    # Wait until the ad's photos are downloaded (or given up on).
+            conditions = [
+                ~self._finished(processor, ads.c.token),
+                # Wait until the ad's photos are downloaded (or given up on).
+                ~exists().where(
+                    photos.c.token == ads.c.token,
+                    photos.c.sha256.is_(None),
+                    photos.c.download_attempts < MAX_DOWNLOAD_ATTEMPTS,
+                ),
+            ]
+            for required in processor.requires:
+                # ...and until every downloaded photo has the required photo results.
+                conditions.append(
                     ~exists().where(
                         photos.c.token == ads.c.token,
-                        photos.c.sha256.is_(None),
-                        photos.c.download_attempts < MAX_DOWNLOAD_ATTEMPTS,
-                    ),
+                        photos.c.sha256.is_not(None),
+                        ~exists().where(
+                            analysis_results.c.target_type == "photo",
+                            analysis_results.c.target_id == photos.c.sha256,
+                            analysis_results.c.processor == required,
+                            or_(
+                                analysis_results.c.status == "ok",
+                                analysis_results.c.attempts >= MAX_ATTEMPTS,
+                            ),
+                        ),
+                    )
                 )
+            if processor.active_only:
+                conditions.append(ads.c.removed_at.is_(None))
+            tokens = db.execute(
+                select(ads.c.token)
+                .where(*conditions)
                 .order_by(ads.c.first_seen_at.desc())
                 .limit(limit)
             ).scalars().all()
@@ -85,6 +110,21 @@ class ProcessingRunner:
                     .where(photos.c.token == token, photos.c.sha256.is_not(None))
                     .order_by(photos.c.position)
                 ).all()
+                photo_results: dict[str, dict[str, dict]] = {}
+                if processor.requires and ad_photos:
+                    for row in db.execute(
+                        select(
+                            analysis_results.c.target_id,
+                            analysis_results.c.processor,
+                            analysis_results.c.result,
+                        ).where(
+                            analysis_results.c.target_type == "photo",
+                            analysis_results.c.target_id.in_([row.sha256 for row in ad_photos]),
+                            analysis_results.c.processor.in_(processor.requires),
+                            analysis_results.c.status == "ok",
+                        )
+                    ):
+                        photo_results.setdefault(row.target_id, {})[row.processor] = row.result
                 targets.append(
                     (
                         token,
@@ -92,6 +132,7 @@ class ProcessingRunner:
                             token,
                             self.ads.get(token),
                             [PhotoTarget(row.sha256, self.store.path(row.path)) for row in ad_photos],
+                            photo_results,
                         ),
                     )
                 )
@@ -122,3 +163,5 @@ class ProcessingRunner:
                     "attempts": analysis_results.c.attempts + 1,
                 },
             )
+            if error is None:
+                processor.apply(db, target_id, result)

@@ -140,8 +140,14 @@ def list_ads(
         conditions.append(ads.c.sub_model == sub_model)
     if query:
         pattern = f"%{query}%"
+        digits = query.replace("-", "").strip()
         conditions.append(
-            or_(ads.c.title.like(pattern), ads.c.sub_model.like(pattern), ads.c.token == query)
+            or_(
+                ads.c.title.like(pattern),
+                ads.c.sub_model.like(pattern),
+                ads.c.token == query,
+                ads.c.plate == digits,
+            )
         )
     if chat_id is not None:
         conditions.append(
@@ -197,7 +203,54 @@ def ad_detail(engine: Engine, token: str):
         chats = list(
             db.execute(select(chat_ads.c.chat_id).where(chat_ads.c.token == token)).scalars()
         )
-    return ad, history, ad_photos, results, chats
+        same_plate = (
+            db.execute(
+                select(ads.c.token, ads.c.title, ads.c.price, ads.c.first_seen_at, ads.c.removed_at)
+                .where(ads.c.plate == ad.plate, ads.c.token != token)
+                .order_by(ads.c.first_seen_at)
+            ).all()
+            if ad.plate
+            else []
+        )
+    return ad, history, ad_photos, results, chats, same_plate
+
+
+def latest_result(results: list, processor: str) -> dict | None:
+    """The newest successful result of a processor among an ad's analysis rows."""
+    rows = [row for row in results if row.processor == processor and row.status == "ok"]
+    if not rows:
+        return None
+    return max(rows, key=lambda row: (int(row.version) if row.version.isdigit() else 0, row.created_at)).result
+
+
+def condition_summaries(engine: Engine, tokens: list[str]) -> dict[str, dict]:
+    """Claude condition results for a page of ads: {token: {condition, damage, high_impact}}."""
+    if not tokens:
+        return {}
+    with engine.connect() as db:
+        rows = db.execute(
+            select(analysis_results.c.target_id, analysis_results.c.result)
+            .where(
+                analysis_results.c.target_type == "ad",
+                analysis_results.c.processor == "claude_condition",
+                analysis_results.c.status == "ok",
+                analysis_results.c.target_id.in_(tokens),
+            )
+            .order_by(analysis_results.c.created_at)
+        ).all()
+    summaries = {}
+    for token, result in rows:
+        if not result or "overall_condition" not in result:
+            continue
+        summaries[token] = {
+            "condition": result["overall_condition"],
+            "damage": len(result.get("damage") or []),
+            "high_impact": sum(
+                1 for factor in result.get("price_factors") or [] if factor.get("impact") == "high"
+            ),
+            "issues": len(result.get("price_factors") or []),
+        }
+    return summaries
 
 
 def _order(sort: str) -> list:
