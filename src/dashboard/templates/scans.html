@@ -91,7 +91,7 @@
   <p class="muted" style="margin:8px 0 0">Set the filters on Yad2, copy the results page's address and paste it here. The bot announces the search in the chat and scans it within a minute.</p>
 </div>
 
-<h2>History{% if chat is not none %} · chat {{ chat }} <a href="/scans" class="muted">(all)</a>{% endif %}{% if search_filter is not none %} · one search <a href="/scans" class="muted">(all)</a>{% endif %}</h2>
+<h2>History{% if chat is not none %} · chat {{ chat }} <a href="/scans" class="muted">(all)</a>{% endif %}{% if search_filter is not none %} · one search <a href="/scans?search=" class="muted">(all)</a>{% endif %}</h2>
 <p class="muted">Last 24 h:
   {% for status, count in counts | dictsort %}{{ count }} {{ status }}{{ ", " if not loop.last }}{% else %}no scans{% endfor %}
 </p>

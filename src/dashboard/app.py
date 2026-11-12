@@ -105,6 +105,9 @@ def _param(value, key: str = "") -> str:
     return str(value)
 
 
+SEARCH_COOKIE = "search"
+
+
 def _search_id(value: str) -> int | None:
     """The `search` query parameter: one saved search's id, or None for all searches."""
     return int(value) if value.isdigit() else None
@@ -185,13 +188,26 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
     templates.env.globals["days_listed"] = queries.days_listed
     templates.env.globals["search_choices"] = lambda: queries.search_choices(engine)
 
+    def chosen_search(request: Request) -> int | None:
+        """The search the pages are limited to: `?search=` when given, else the remembered one."""
+        if not hasattr(request.state, "search_id"):
+            params = request.query_params
+            value = params["search"] if "search" in params else request.cookies.get(SEARCH_COOKIE, "")
+            search_id = _search_id(value)
+            if search_id is not None and search_store.get_search(search_id) is None:
+                search_id = None  # stopped since
+            request.state.search_id = search_id
+        return request.state.search_id
+
+    templates.env.globals["search_in_use"] = lambda request: str(chosen_search(request) or "")
+
     @app.get("/healthz", response_class=PlainTextResponse)
     def healthz() -> str:
         return "ok"
 
     @pages.get("/", response_class=HTMLResponse)
-    def overview(request: Request, search: str = ""):
-        search_id = _search_id(search)
+    def overview(request: Request):
+        search_id = chosen_search(request)
         return templates.TemplateResponse(
             request,
             "overview.html",
@@ -207,9 +223,9 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
         )
 
     @pages.get("/scans", response_class=HTMLResponse)
-    def scan_page(request: Request, chat: str = "", search: str = "", notice: str = "", error: str = ""):
+    def scan_page(request: Request, chat: str = "", notice: str = "", error: str = ""):
         chat_id = int(chat) if chat.lstrip("-").isdigit() else None
-        search_id = _search_id(search)
+        search_id = chosen_search(request)
         return templates.TemplateResponse(
             request,
             "scans.html",
@@ -306,10 +322,9 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
         chat: str = "",
         sort: str = "seen",
         page: int = 1,
-        search: str = "",
     ):
         page = max(page, 1)
-        search_id = _search_id(search)
+        search_id = chosen_search(request)
         filters = {
             "status": status, "manufacturer": manufacturer, "model": model,
             "sub_model": sub_model, "q": q, "chat": chat, "sort": sort,
@@ -402,10 +417,9 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
         model: str = "",
         sub_model: str = "",
         x: str = "km",
-        search: str = "",
     ):
         x = x if x in ("km", "year") else "km"
-        search_id = _search_id(search)
+        search_id = chosen_search(request)
         rows = queries.market_points(engine, manufacturer or None, model or None, search_id=search_id)
         # One row per subtype once a model is chosen, otherwise one row per model.
         groups = queries.group_points(rows, by_sub_model=bool(model))
@@ -489,6 +503,18 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
             media_type="image/webp",
             headers={"Cache-Control": "private, max-age=31536000, immutable"},
         )
+
+    @pages.middleware("http")
+    async def remember_search(request: Request, call_next):
+        """Picking a search (`?search=`, empty for all) is remembered for the next pages."""
+        response = await call_next(request)
+        if "search" in request.query_params:
+            value = request.query_params["search"]
+            if value.isdigit():
+                response.set_cookie(SEARCH_COOKIE, value, max_age=365 * 86400, httponly=True, samesite="lax")
+            else:
+                response.delete_cookie(SEARCH_COOKIE)
+        return response
 
     app.mount("/", pages)
     return app

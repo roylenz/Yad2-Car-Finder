@@ -117,7 +117,7 @@
   {% block head %}{% endblock %}
 </head>
 <body>
-  {% set chosen_search = request.query_params.get("search", "") if request.query_params.get("search", "").isdigit() else "" %}
+  {% set chosen_search = search_in_use(request) %}
   {% set scope = "?search=" ~ chosen_search if chosen_search else "" %}
   <header>
     <a class="brand" href="/{{ scope }}">Yad2 Car Finder</a>

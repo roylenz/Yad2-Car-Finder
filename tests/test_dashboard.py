@@ -152,6 +152,17 @@ class DashboardTests(unittest.TestCase):
         self.assertNotIn("טויוטה קורולה", overview)
         self.assertIn(f"/scans?search={electric.id}", overview)
 
+        # The choice is remembered on pages opened without `?search=`, until "All searches".
+        self.assertNotIn("טויוטה קורולה", self.client.get("/ads?status=all").text)
+        self.assertNotIn("טויוטה", self.client.get("/market").text)
+        self.assertNotIn("טויוטה קורולה", self.client.get("/").text)
+        self.assertIn("טויוטה קורולה", self.client.get("/ads?status=all&search=").text)
+        self.assertIn("טויוטה קורולה", self.client.get("/ads?status=all").text)
+
+        self.client.get(f"/?search={electric.id}")
+        self.state.stop_search(electric.id)
+        self.assertIn("טויוטה קורולה", self.client.get("/ads?status=all").text)  # stopped: back to all
+
     def test_background_page_shows_live_status_and_backlog(self):
         from storage.background_status import StatusBoard
         from tracking.background import BackgroundPipeline

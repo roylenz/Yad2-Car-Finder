@@ -22,7 +22,7 @@ Telegram bot that scrapes [Yad2](https://www.yad2.co.il/vehicles/cars) for car l
 - **Retries and failure evidence** - a results page that fails to load is retried after 10 seconds (3 attempts). The bot tells Yad2's bot check apart from a network error or a timeout, waits up to 30 seconds for a bot check to clear by itself, and keeps a screenshot of each failure in `data/scan-failures/`
 - **Several searches per chat** - each chat can track up to `MAX_SEARCHES_PER_CHAT` searches (default 5), each on its own schedule. An ad that matches two of a chat's searches alerts once, and alerts say which search found them when a chat has several
 - **Searches from the dashboard** - the Scans page adds a search (paste a Yad2 link, pick the chat and interval) or stops one; the bot picks it up within a minute and tells the chat
-- **Dashboard by search** - the search picker in the dashboard header limits the overview, ads, market and scans pages to one search's cars (a reposted car counts if any of its ads was found); the choice follows you between pages
+- **Dashboard by search** - the search picker in the dashboard header limits the overview, ads, market and scans pages to one search's cars (a reposted car counts if any of its ads was found); the choice is remembered (a cookie) on every tab until you pick "All searches"
 - **One scan at a time** - a shared queue runs at most `MAX_CONCURRENT_SCANS` browser scans at once (default 1), at least `SCAN_GAP_SECONDS` apart (default 45); back-to-back page loads trip Yad2's bot check
 - **Private access** - users request access with their name; admins approve requests and can promote other admins
 - **Structured logging** - colored console output with structured JSON kwargs, configurable log level via `LOG_LEVEL` env var
