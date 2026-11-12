@@ -34,6 +34,14 @@ Your user on the Pi can't access the Docker socket, so run `docker` with `sudo`.
    ssh pi 'cd ~/Yad2-Car-Finder && git pull --ff-only && sudo docker compose up -d --build'
    ```
 
+   For a dashboard-only change, rebuild the shared image and restart just the dashboard, so a
+   running scan isn't interrupted (`up --build --no-deps dashboard` alone does not rebuild it,
+   because the image is built by the `bot` service):
+
+   ```bash
+   ssh pi 'cd ~/Yad2-Car-Finder && git pull --ff-only && sudo docker compose build bot && sudo docker compose up -d --no-deps dashboard'
+   ```
+
 4. Check that the bot started:
 
    ```bash
