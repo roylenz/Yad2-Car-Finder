@@ -49,6 +49,7 @@
 - A plate is saved on an ad only once the registry confirms it is the same make/model (OCR errors read as real plates of other cars)
 - Dealers (סוחר) are not hands: compare the ad's ownership and hand with the last non-dealer owner in the registry's ownership history (`plates.ownership_summary`); a first registration to a company for under 3 months is the importer, not a hand; time with dealers is reported separately
 - Reposts of one car share `ads.car_id` (token of the group's earliest ad, set only through `storage.cars.link`, reasons in `ad_links`). Dashboard lists show the newest ad per car; days on market, price drops and history span the whole group
+- The dashboard's `search` query parameter (header picker, carried in nav links and filter forms) scopes overview, ads and market queries through `queries._in_search` (cars with any ad in that search's `search_ads`); the scans page uses it for history
 - One-time scans auto-deactivate after completion
 - Bot token loaded from `.env` via `python-dotenv`
 

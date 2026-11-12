@@ -93,6 +93,11 @@
     .badge.running, .badge.queued, .badge.processing, .badge.downloading { border-color: var(--accent); color: var(--accent); }
     .badge.error { border-color: var(--critical); color: var(--critical); }
     .badge.paused { border-color: var(--series-2); color: var(--series-2); }
+    header .search-pick { margin-left: auto; }
+    header .search-pick select {
+      font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--surface-1); color: var(--text-primary); max-width: 320px;
+    }
     form.filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; }
     form.filters input, form.filters select, form.filters button {
       font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border);
@@ -112,15 +117,29 @@
   {% block head %}{% endblock %}
 </head>
 <body>
+  {% set chosen_search = request.query_params.get("search", "") if request.query_params.get("search", "").isdigit() else "" %}
+  {% set scope = "?search=" ~ chosen_search if chosen_search else "" %}
   <header>
-    <a class="brand" href="/">Yad2 Car Finder</a>
+    <a class="brand" href="/{{ scope }}">Yad2 Car Finder</a>
     <nav>
-      <a href="/" class="{{ 'active' if nav == 'overview' }}">Overview</a>
-      <a href="/ads" class="{{ 'active' if nav == 'ads' }}">Ads</a>
-      <a href="/market" class="{{ 'active' if nav == 'market' }}">Market</a>
-      <a href="/scans" class="{{ 'active' if nav == 'scans' }}">Scans</a>
+      <a href="/{{ scope }}" class="{{ 'active' if nav == 'overview' }}">Overview</a>
+      <a href="/ads{{ scope }}" class="{{ 'active' if nav == 'ads' }}">Ads</a>
+      <a href="/market{{ scope }}" class="{{ 'active' if nav == 'market' }}">Market</a>
+      <a href="/scans{{ scope }}" class="{{ 'active' if nav == 'scans' }}">Scans</a>
       <a href="/background" class="{{ 'active' if nav == 'background' }}">Background</a>
     </nav>
+    {% set choices = search_choices() %}
+    {% if choices and nav in ("overview", "ads", "market", "scans") %}
+    <form class="search-pick" method="get" action="{{ "/ads" if nav == "ads" else request.url.path }}">
+      <label class="muted" for="search-pick">Search</label>
+      <select id="search-pick" name="search" onchange="this.form.submit()">
+        <option value="">All searches</option>
+        {% for id, label in choices %}
+        <option value="{{ id }}" {{ "selected" if chosen_search == id | string }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </form>
+    {% endif %}
   </header>
   <main>{% block content %}{% endblock %}</main>
   {% block scripts %}{% endblock %}

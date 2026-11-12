@@ -9,6 +9,7 @@
 {% block content %}
 <h1>Ads <span class="muted">({{ total | number }})</span></h1>
 <form class="filters" method="get">
+  {% if filters.search %}<input type="hidden" name="search" value="{{ filters.search }}">{% endif %}
   <input type="search" name="q" value="{{ filters.q }}" placeholder="Search model, plate or ad ID">
   <select name="status">
     {% for value, label in [("active", "On Yad2"), ("removed", "Removed"), ("all", "All")] %}
@@ -35,9 +36,9 @@
     {% endfor %}
   </select>
   {% endif %}
-  {% if chats %}
+  {% if chats | length > 1 %}
   <select name="chat">
-    <option value="">All searches</option>
+    <option value="">All chats</option>
     {% for chat_id in chats %}
     <option value="{{ chat_id }}" {{ "selected" if filters.chat == chat_id | string }}>Chat {{ chat_id }}</option>
     {% endfor %}

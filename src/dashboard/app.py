@@ -105,6 +105,11 @@ def _param(value, key: str = "") -> str:
     return str(value)
 
 
+def _search_id(value: str) -> int | None:
+    """The `search` query parameter: one saved search's id, or None for all searches."""
+    return int(value) if value.isdigit() else None
+
+
 def _nice_ticks(low: int, high: int, count: int = 5) -> list[int]:
     """Round axis ticks covering [low, high]."""
     if high <= low:
@@ -178,20 +183,25 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
     )
     templates.env.globals["duration"] = _duration
     templates.env.globals["days_listed"] = queries.days_listed
+    templates.env.globals["search_choices"] = lambda: queries.search_choices(engine)
 
     @app.get("/healthz", response_class=PlainTextResponse)
     def healthz() -> str:
         return "ok"
 
     @pages.get("/", response_class=HTMLResponse)
-    def overview(request: Request):
+    def overview(request: Request, search: str = ""):
+        search_id = _search_id(search)
         return templates.TemplateResponse(
             request,
             "overview.html",
             {
-                "stats": queries.overview(engine),
-                "events": queries.recent_events(engine),
-                "searches": queries.search_statuses(engine),
+                "stats": queries.overview(engine, search_id),
+                "events": queries.recent_events(engine, search_id=search_id),
+                "searches": [
+                    status for status in queries.search_statuses(engine)
+                    if search_id is None or status.id == search_id
+                ],
                 "nav": "overview",
             },
         )
@@ -199,7 +209,7 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
     @pages.get("/scans", response_class=HTMLResponse)
     def scan_page(request: Request, chat: str = "", search: str = "", notice: str = "", error: str = ""):
         chat_id = int(chat) if chat.lstrip("-").isdigit() else None
-        search_id = int(search) if search.isdigit() else None
+        search_id = _search_id(search)
         return templates.TemplateResponse(
             request,
             "scans.html",
@@ -296,16 +306,19 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
         chat: str = "",
         sort: str = "seen",
         page: int = 1,
+        search: str = "",
     ):
         page = max(page, 1)
+        search_id = _search_id(search)
         filters = {
             "status": status, "manufacturer": manufacturer, "model": model,
             "sub_model": sub_model, "q": q, "chat": chat, "sort": sort,
+            "search": str(search_id or ""),
         }
         chat_id = int(chat) if chat.lstrip("-").isdigit() else None
         rows, total = queries.list_ads(
             engine, status, manufacturer or None, q or None, model or None, sub_model or None,
-            chat_id, sort, PAGE_SIZE, (page - 1) * PAGE_SIZE,
+            chat_id, sort, PAGE_SIZE, (page - 1) * PAGE_SIZE, search_id,
         )
         return templates.TemplateResponse(
             request,
@@ -319,9 +332,9 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
                 "pages": max((total + PAGE_SIZE - 1) // PAGE_SIZE, 1),
                 "filters": filters,
                 "query": urlencode({key: value for key, value in filters.items() if value}),
-                "manufacturers": queries.manufacturers(engine),
-                "models": queries.models(engine, manufacturer or None),
-                "sub_models": queries.sub_models(engine, manufacturer or None, model or None)
+                "manufacturers": queries.manufacturers(engine, search_id),
+                "models": queries.models(engine, manufacturer or None, search_id),
+                "sub_models": queries.sub_models(engine, manufacturer or None, model or None, search_id)
                 if model
                 else [],
                 "chats": queries.chat_ids(engine),
@@ -389,9 +402,11 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
         model: str = "",
         sub_model: str = "",
         x: str = "km",
+        search: str = "",
     ):
         x = x if x in ("km", "year") else "km"
-        rows = queries.market_points(engine, manufacturer or None, model or None)
+        search_id = _search_id(search)
+        rows = queries.market_points(engine, manufacturer or None, model or None, search_id=search_id)
         # One row per subtype once a model is chosen, otherwise one row per model.
         groups = queries.group_points(rows, by_sub_model=bool(model))
         scatter_rows = [row for row in rows if not sub_model or row.sub_model == sub_model]
@@ -426,10 +441,13 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
                 "count": len(points),
                 "removed_count": len(removed),
                 "median_days": removed[len(removed) // 2] if removed else None,
-                "filters": {"manufacturer": manufacturer, "model": model, "sub_model": sub_model, "x": x},
-                "manufacturers": queries.manufacturers(engine),
-                "models": queries.models(engine, manufacturer or None),
-                "sub_models": queries.sub_models(engine, manufacturer or None, model or None)
+                "filters": {
+                    "manufacturer": manufacturer, "model": model, "sub_model": sub_model, "x": x,
+                    "search": str(search_id or ""),
+                },
+                "manufacturers": queries.manufacturers(engine, search_id),
+                "models": queries.models(engine, manufacturer or None, search_id),
+                "sub_models": queries.sub_models(engine, manufacturer or None, model or None, search_id)
                 if model
                 else [],
                 "groups": groups,

@@ -29,6 +29,7 @@
 {% block content %}
 <h1>Market</h1>
 <form class="filters" method="get">
+  {% if filters.search %}<input type="hidden" name="search" value="{{ filters.search }}">{% endif %}
   <select name="manufacturer" onchange="this.form.model.value=''; if (this.form.sub_model) this.form.sub_model.value=''; this.form.submit()">
     <option value="">All makes</option>
     {% for name in manufacturers %}
@@ -79,7 +80,7 @@
   </div>
   <div class="strip" id="strip">
     {% for group in groups %}
-    {% set link = "?" ~ ({"manufacturer": group.manufacturer or "", "model": group.model or "", "sub_model": group.sub_model or "", "x": filters.x} | urlencode) %}
+    {% set link = "?" ~ ({"manufacturer": group.manufacturer or "", "model": group.model or "", "sub_model": group.sub_model or "", "x": filters.x, "search": filters.search} | urlencode) %}
     <div class="strip-row {{ 'selected' if filters.sub_model and filters.sub_model == group.sub_model }}">
       <a class="strip-label" href="{{ link }}" title="{{ group.name }}"><bdi dir="rtl">{{ group.name }}</bdi></a>
       <div class="strip-track">

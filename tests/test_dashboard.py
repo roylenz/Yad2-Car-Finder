@@ -123,6 +123,35 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("Stopped", stopped.text)
         self.assertNotIn(added, self.state.chat_searches(1))
 
+    def test_pages_can_be_limited_to_one_search(self):
+        corolla = self.state.chat_searches(1)[0]
+        electric, _ = self.state.add_search(1, "https://www.yad2.co.il/vehicles/cars?carTag=6&price=1-100000", 10)
+        car = CarListing(
+            "https://www.yad2.co.il/vehicles/item/tesla1", "טסלה מודל 3", 95000, 30000,
+            year=2023, manufacturer="טסלה", model="מודל 3",
+        )
+        AdTracker(self.state.ads).apply(1, electric.id, ScanOutput([car]))
+
+        everything = self.client.get("/ads?status=all").text
+        self.assertIn("טסלה מודל 3", everything)
+        self.assertIn("טויוטה קורולה", everything)
+        only_electric = self.client.get(f"/ads?status=all&search={electric.id}").text
+        self.assertIn("טסלה מודל 3", only_electric)
+        self.assertNotIn("טויוטה קורולה", only_electric)
+        self.assertIn(f'name="search" value="{electric.id}"', only_electric)  # kept when filtering
+        self.assertIn(f'href="/market?search={electric.id}"', only_electric)  # and across pages
+        self.assertIn("Electric · up to ₪100,000", only_electric)  # the picker
+
+        market = self.client.get(f"/market?search={corolla.id}").text
+        self.assertIn("טויוטה", market)
+        self.assertNotIn("טסלה", market)
+        self.assertIn(f"search={corolla.id}", market)
+
+        overview = self.client.get(f"/?search={electric.id}").text
+        self.assertIn("טסלה מודל 3", overview)
+        self.assertNotIn("טויוטה קורולה", overview)
+        self.assertIn(f"/scans?search={electric.id}", overview)
+
     def test_background_page_shows_live_status_and_backlog(self):
         from storage.background_status import StatusBoard
         from tracking.background import BackgroundPipeline

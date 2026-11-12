@@ -10,7 +10,7 @@ from storage.db import utcnow
 from tracking.tracker import price_floor, search_max_price
 from car.search_url import describe_search
 from storage.schema import (
-    access, ad_snapshots, admins, ads, analysis_results, chat_ads, photos, scans, searches,
+    access, ad_snapshots, admins, ads, analysis_results, chat_ads, photos, scans, search_ads, searches,
 )
 
 def _car_key(table):
@@ -25,6 +25,20 @@ def _market_since():
         .where(_car_key(other) == _car_key(ads))
         .scalar_subquery()
     )
+
+
+def _in_search(search_id: int | None) -> list:
+    """Conditions keeping only cars a search found (any of the car's ads); none for all searches."""
+    if search_id is None:
+        return []
+    found = ads.alias("found")
+    return [
+        _car_key(ads).in_(
+            select(_car_key(found))
+            .join(search_ads, search_ads.c.token == found.c.token)
+            .where(search_ads.c.search_id == search_id)
+        )
+    ]
 
 
 def _repost_count():
@@ -142,16 +156,19 @@ class Overview:
     photo_bytes: int
 
 
-def overview(engine: Engine) -> Overview:
+def overview(engine: Engine, search_id: int | None = None) -> Overview:
     now = utcnow()
     day, week = now - datetime.timedelta(days=1), now - datetime.timedelta(days=7)
+    scope = _in_search(search_id)
+    scoped_tokens = select(ads.c.token).where(*scope)
     with engine.connect() as db:
         count = lambda *where: db.execute(  # noqa: E731
-            select(func.count()).select_from(ads).where(*where)
+            select(func.count()).select_from(ads).where(*where, *scope)
         ).scalar_one()
         price_changes = db.execute(
             select(ad_snapshots.c.changes).where(
-                ad_snapshots.c.observed_at >= day, ad_snapshots.c.changes.is_not(None)
+                ad_snapshots.c.observed_at >= day, ad_snapshots.c.changes.is_not(None),
+                *([ad_snapshots.c.token.in_(scoped_tokens)] if scope else []),
             )
         ).scalars()
         drops = sum(
@@ -159,12 +176,12 @@ def overview(engine: Engine) -> Overview:
         )
         removed = db.execute(
             select(ads.c.listed_at, ads.c.first_seen_at, ads.c.removed_at).where(
-                ads.c.removed_at.is_not(None)
+                ads.c.removed_at.is_not(None), *scope
             )
         ).all()
         photo_count, photo_bytes = db.execute(
             select(func.count(func.distinct(photos.c.sha256)), func.coalesce(func.sum(photos.c.size_bytes), 0))
-            .where(photos.c.sha256.is_not(None))
+            .where(photos.c.sha256.is_not(None), *([photos.c.token.in_(scoped_tokens)] if scope else []))
         ).one()
         result = Overview(
             active=count(ads.c.removed_at.is_(None)),
@@ -181,22 +198,23 @@ def overview(engine: Engine) -> Overview:
     return result
 
 
-def recent_events(engine: Engine, limit: int = 30) -> list:
+def recent_events(engine: Engine, limit: int = 30, search_id: int | None = None) -> list:
     with engine.connect() as db:
         return db.execute(
             select(ad_snapshots, ads.c.title, ads.c.year)
             .join(ads, ads.c.token == ad_snapshots.c.token)
+            .where(*_in_search(search_id))
             .order_by(ad_snapshots.c.observed_at.desc(), ad_snapshots.c.id.desc())
             .limit(limit)
         ).all()
 
 
-def manufacturers(engine: Engine) -> list[str]:
+def manufacturers(engine: Engine, search_id: int | None = None) -> list[str]:
     with engine.connect() as db:
         return [
             value
             for value in db.execute(
-                select(ads.c.manufacturer).distinct().order_by(ads.c.manufacturer)
+                select(ads.c.manufacturer).distinct().where(*_in_search(search_id)).order_by(ads.c.manufacturer)
             ).scalars()
             if value
         ]
@@ -228,8 +246,9 @@ def list_ads(
     sort: str = "seen",
     limit: int = 100,
     offset: int = 0,
+    search_id: int | None = None,
 ) -> tuple[list, int]:
-    conditions = [_latest_of_car()]
+    conditions = [_latest_of_car(), *_in_search(search_id)]
     if status == "active":
         conditions.append(ads.c.removed_at.is_(None))
     elif status == "removed":
@@ -391,12 +410,14 @@ def ignored_price_floor(engine: Engine) -> int:
 
 
 def market_points(
-    engine: Engine, manufacturer: str | None, model: str | None, sub_model: str | None = None
+    engine: Engine, manufacturer: str | None, model: str | None, sub_model: str | None = None,
+    search_id: int | None = None,
 ) -> list:
     conditions = [
         ads.c.price.is_not(None),
         ads.c.price >= ignored_price_floor(engine),
         _latest_of_car(),
+        *_in_search(search_id),
     ]
     if manufacturer:
         conditions.append(ads.c.manufacturer == manufacturer)
@@ -415,8 +436,8 @@ def market_points(
         ).all()
 
 
-def models(engine: Engine, manufacturer: str | None) -> list[str]:
-    statement = select(ads.c.model).distinct().order_by(ads.c.model)
+def models(engine: Engine, manufacturer: str | None, search_id: int | None = None) -> list[str]:
+    statement = select(ads.c.model).distinct().where(*_in_search(search_id)).order_by(ads.c.model)
     if manufacturer:
         statement = statement.where(ads.c.manufacturer == manufacturer)
     with engine.connect() as db:
@@ -430,8 +451,10 @@ def photo_key(engine: Engine, sha256: str) -> str | None:
         ).scalar_one_or_none()
 
 
-def sub_models(engine: Engine, manufacturer: str | None, model: str | None) -> list[str]:
-    statement = select(ads.c.sub_model).distinct().order_by(ads.c.sub_model)
+def sub_models(
+    engine: Engine, manufacturer: str | None, model: str | None, search_id: int | None = None
+) -> list[str]:
+    statement = select(ads.c.sub_model).distinct().where(*_in_search(search_id)).order_by(ads.c.sub_model)
     if manufacturer:
         statement = statement.where(ads.c.manufacturer == manufacturer)
     if model:
@@ -530,6 +553,13 @@ def search_statuses(engine: Engine) -> list[SearchStatus]:
                 )
             )
     return statuses
+
+
+def search_choices(engine: Engine) -> list[tuple[int, str]]:
+    """(id, label) of every saved search, for the dashboard's search picker."""
+    with engine.connect() as db:
+        rows = db.execute(select(searches.c.id, searches.c.url).order_by(searches.c.id)).all()
+    return [(row.id, describe_search(row.url)) for row in rows]
 
 
 def known_chats(engine: Engine) -> list[int]:
