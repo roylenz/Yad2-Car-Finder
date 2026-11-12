@@ -308,6 +308,28 @@ class AccessCommandTests(unittest.IsolatedAsyncioTestCase):
             message.reply_text.assert_awaited_once_with("No pending requests.")
 
 
+class SyncSearchesTests(unittest.IsolatedAsyncioTestCase):
+    async def test_interval_changed_on_dashboard_reschedules_the_search(self):
+        from telegram.ext import ApplicationBuilder
+
+        from bot import bot as bot_module
+
+        with tempfile.TemporaryDirectory() as directory:
+            state = BotState(str(Path(directory) / "bot.sqlite3"))
+            search, _ = state.add_search(101, EXAMPLE_URL, 10)
+            app = ApplicationBuilder().token("123:test").build()
+            scanner = Scanner(state)
+            scanner.access_check = lambda chat_id: True
+            with unittest.mock.patch.object(bot_module, "scanner", scanner):
+                self.assertEqual(bot_module.sync_searches(app.job_queue), (1, []))
+                self.assertEqual(bot_module.sync_searches(app.job_queue), (1, []))  # unchanged
+                state.set_interval(search.id, 30)
+                count, changed = bot_module.sync_searches(app.job_queue)
+                self.assertEqual([item.interval_minutes for item in changed], [30])
+                jobs = [job for job in app.job_queue.jobs() if job.data == search.id and not job.removed]
+                self.assertEqual([bot_module._interval_seconds(job) for job in jobs], [1800])
+
+
 class ScanQueueTests(unittest.IsolatedAsyncioTestCase):
     async def run_queue(self, searches, workers=2):
         """Queue a scan of each search (and a duplicate of the first); record overlaps."""

@@ -119,6 +119,12 @@ class DashboardTests(unittest.TestCase):
         )
         self.assertEqual(foreign.status_code, 403)
 
+        changed = self.client.post(f"/searches/{added.id}/interval", data={"interval": "30"})
+        self.assertIn("now every 30 minutes", changed.text)
+        self.assertEqual(self.state.get_search(added.id).interval_minutes, 30)
+        self.assertIn("listed intervals", self.client.post(f"/searches/{added.id}/interval", data={"interval": "7"}).text)
+        self.assertEqual(self.client.post("/searches/999/interval", data={"interval": "30"}).status_code, 404)
+
         stopped = self.client.post(f"/searches/{added.id}/stop")
         self.assertIn("Stopped", stopped.text)
         self.assertNotIn(added, self.state.chat_searches(1))

@@ -95,6 +95,14 @@ class SearchStore:
             ).all()
         return [Search.from_row(row) for row in rows]
 
+    def set_interval(self, search_id: int, interval_minutes: int) -> "Search | None":
+        """Change how often a search is scanned; the bot reschedules it on its next sync."""
+        with self.engine.begin() as db:
+            db.execute(
+                update(searches).where(searches.c.id == search_id).values(interval_minutes=interval_minutes)
+            )
+        return self.get_search(search_id)
+
     def stop_search(self, search_id: int) -> None:
         """Forget a search; the ad history is kept. A chat left without searches also forgets
         what it was told, so a search started again later alerts its results afresh."""

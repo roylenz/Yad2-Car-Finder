@@ -13,6 +13,8 @@
   }
   form.add-search input { width: 100%; }
   form.add-search button { background: var(--accent); color: #fff; border-color: var(--accent); cursor: pointer; }
+  form.interval-form { display: inline; }
+  form.interval-form select { font: inherit; font-size: 13px; padding: 1px 4px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); }
   form button.stop { color: var(--critical); border-color: var(--critical); cursor: pointer; font-size: 13px; padding: 3px 10px; }
 </style>
 {% endblock %}
@@ -22,7 +24,8 @@
 <script>
   setInterval(() => {
     const field = document.querySelector("form.add-search input[name=url]");
-    if (!field || (!field.value && document.activeElement !== field)) location.reload();
+    const choosing = document.activeElement && document.activeElement.tagName === "SELECT";
+    if (!choosing && (!field || (!field.value && document.activeElement !== field))) location.reload();
   }, 20000);
 </script>
 
@@ -37,7 +40,17 @@
 {% for search in searches %}
   <div class="card">
     <div style="font-weight:600" dir="auto">{{ search.description }}</div>
-    <div class="secondary">Chat {{ search.chat_id }} · every {{ search.interval_minutes }} min ·
+    <div class="secondary">Chat {{ search.chat_id }} ·
+      <form method="post" action="/searches/{{ search.id }}/interval" class="interval-form">
+        <label>every
+          <select name="interval" onchange="this.form.submit()" aria-label="Scan interval">
+            {% for minutes in intervals %}
+            <option value="{{ minutes }}" {{ "selected" if minutes == search.interval_minutes }}>{{ minutes }} min</option>
+            {% endfor %}
+            {% if search.interval_minutes not in intervals %}<option selected>{{ search.interval_minutes }} min</option>{% endif %}
+          </select></label>
+        <noscript><button type="submit">Save</button></noscript>
+      </form> ·
       <a href="{{ search.url }}" target="_blank" rel="noopener">search on Yad2</a> ·
       <a href="/scans?search={{ search.id }}">history</a></div>
     {% if search.active and search.active.status == "running" %}

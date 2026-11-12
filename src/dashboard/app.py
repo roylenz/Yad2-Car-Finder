@@ -272,6 +272,22 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
         message = f"Added: {describe_search(url)}. The bot starts scanning it within a minute."
         return RedirectResponse(f"/scans?{urlencode({'notice': message})}", status_code=303)
 
+    @pages.post("/searches/{search_id}/interval")
+    async def change_interval(request: Request, search_id: int):
+        _same_origin(request)
+        form = dict(parse_qsl((await request.body()).decode()))
+        interval = int(form["interval"]) if form.get("interval", "").isdigit() else None
+        if interval not in SEARCH_INTERVALS:
+            return RedirectResponse(f"/scans?{urlencode({'error': 'Pick one of the listed intervals.'})}", status_code=303)
+        search = search_store.set_interval(search_id, interval)
+        if search is None:
+            raise HTTPException(404, "Search not found")
+        message = (
+            f"{describe_search(search.url)}: now every {interval} minutes. "
+            "The bot switches within a minute and tells the chat."
+        )
+        return RedirectResponse(f"/scans?{urlencode({'notice': message})}", status_code=303)
+
     @pages.post("/searches/{search_id}/stop")
     def stop_search(request: Request, search_id: int):
         _same_origin(request)
