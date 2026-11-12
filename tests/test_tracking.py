@@ -159,33 +159,33 @@ class NeedsDetailsTests(unittest.TestCase):
 class TrackerTests(TempStateTestCase):
     def test_lifecycle_new_drop_removed_relisted(self):
         tracker = AdTracker(self.state.ads)
-        self.state.set_search(1, SEARCH, 10)
+        self.search, _ = self.state.add_search(1, SEARCH, 10)
         detailed = yad2_json.listing_from_json(
             yad2_json.item_data(fixture("item_next_data.json")), detailed=True
         )
         t0 = datetime.datetime(2026, 11, 10, 12)
 
-        result = tracker.apply(1, ScanOutput([detailed]), t0)
+        result = tracker.apply(1, self.search.id, ScanOutput([detailed]), t0)
         self.assertEqual([item.token for item in result.new], ["6rg1e7dp"])
-        self.assertEqual(self.state.ads.chat_search_urls(1), frozenset({URL}))
+        self.assertEqual(self.state.ads.search_urls(self.search.id), frozenset({URL}))
         self.assertEqual(self.count(photos), 2)
 
         # Feed-only listing (no km) with a lower price and one photo gone.
         cheaper = yad2_json.listing_from_json(yad2_json.feed_ads(fixture("feed_next_data.json"))[0])
         cheaper = CarListing(**{**cheaper.__dict__, "price": 83000, "images": cheaper.images[:1]})
-        result = tracker.apply(1, ScanOutput([cheaper]), t0 + datetime.timedelta(hours=1))
+        result = tracker.apply(1, self.search.id, ScanOutput([cheaper]), t0 + datetime.timedelta(hours=1))
         self.assertEqual(result.new, [])
         listing, old_price = result.drops[0]
         self.assertEqual((old_price, listing.price, listing.km), (86000, 83000, 145000))
         self.assertEqual(self.count(photos, photos.c.removed_from_ad_at.is_not(None)), 1)
 
-        result = tracker.apply(1, ScanOutput([], removed=[URL]), t0 + datetime.timedelta(hours=2))
+        result = tracker.apply(1, self.search.id, ScanOutput([], removed=[URL]), t0 + datetime.timedelta(hours=2))
         self.assertEqual(result.removed, [URL])
         with self.state.engine.connect() as db:
             self.assertIsNotNone(db.execute(select(ads.c.removed_at)).scalar_one())
-        self.assertEqual(self.state.ads.chat_search_urls(1), frozenset())
+        self.assertEqual(self.state.ads.search_urls(self.search.id), frozenset())
 
-        tracker.apply(1, ScanOutput([cheaper]), t0 + datetime.timedelta(hours=3))
+        tracker.apply(1, self.search.id, ScanOutput([cheaper]), t0 + datetime.timedelta(hours=3))
         with self.state.engine.connect() as db:
             self.assertIsNone(db.execute(select(ads.c.removed_at)).scalar_one())
             history = db.execute(
@@ -199,10 +199,10 @@ class TrackerTests(TempStateTestCase):
     def test_badge_price_from_old_scraper_is_corrected_silently(self):
         # Smart EQ ForFour: Yad2 shows 150,000 -> 100,000; the old scraper saved the 50,000 badge.
         tracker = AdTracker(self.state.ads)
-        self.state.set_search(1, SEARCH, 10)
-        tracker.apply(1, ScanOutput([CarListing(URL, "Car", 50000)]))
+        self.search, _ = self.state.add_search(1, SEARCH, 10)
+        tracker.apply(1, self.search.id, ScanOutput([CarListing(URL, "Car", 50000)]))
         real = CarListing(URL, "Car", 100000, attributes={"price_before": 150000})
-        result = tracker.apply(1, ScanOutput([real]))
+        result = tracker.apply(1, self.search.id, ScanOutput([real]))
         self.assertEqual((result.new, result.drops), ([], []))
         self.assertEqual(self.state.ads.get("6rg1e7dp").price, 100000)
         self.assertEqual(self.state.previous_listings(1)[URL].price, 100000)
@@ -216,22 +216,22 @@ class TrackerTests(TempStateTestCase):
         self.assertIsNone(search_max_price("https://www.yad2.co.il/vehicles/cars?price=50000--1"))
         self.assertEqual(price_floor(None, [90000, 1, None]), 9000)
         tracker = AdTracker(self.state.ads)
-        self.state.set_search(1, url, 10)
+        self.search, _ = self.state.add_search(1, url, 10)
         lease = CarListing(URL.replace("6rg1e7dp", "lease001"), "Lease", 5550)
         placeholder = CarListing(URL.replace("6rg1e7dp", "placehld"), "Ask", 1)
         real = CarListing(URL, "Car", 90000)
-        result = tracker.apply(1, ScanOutput([lease, placeholder, real]), search_url=url)
+        result = tracker.apply(1, self.search.id, ScanOutput([lease, placeholder, real]), search_url=url)
         self.assertEqual(result.new, [real])
         dropped = CarListing(lease.url, "Lease", 4850)
-        result = tracker.apply(1, ScanOutput([dropped, placeholder, real]), search_url=url)
+        result = tracker.apply(1, self.search.id, ScanOutput([dropped, placeholder, real]), search_url=url)
         self.assertEqual(result.drops, [])
         self.assertEqual(self.state.ads.get("lease001").price, 4850)  # still archived
 
     def test_title_spacing_is_not_a_change(self):
         tracker = AdTracker(self.state.ads)
-        self.state.set_search(1, SEARCH, 10)
-        tracker.apply(1, ScanOutput([CarListing(URL, "אי.וי איזי Limo", 90000)]))
-        tracker.apply(1, ScanOutput([CarListing(URL, "אי.וי איזי  Limo", 90000)]))
+        self.search, _ = self.state.add_search(1, SEARCH, 10)
+        tracker.apply(1, self.search.id, ScanOutput([CarListing(URL, "אי.וי איזי Limo", 90000)]))
+        tracker.apply(1, self.search.id, ScanOutput([CarListing(URL, "אי.וי איזי  Limo", 90000)]))
         with self.state.engine.connect() as db:
             history = db.execute(select(ad_snapshots.c.changes)).scalars().all()
         self.assertEqual(history, [None])
@@ -239,32 +239,34 @@ class TrackerTests(TempStateTestCase):
     def test_big_drop_badge_does_not_alert(self):
         # 200,000 -> 90,000: the badge (110,000) is above the new price and looked like a drop.
         tracker = AdTracker(self.state.ads)
-        self.state.set_search(1, SEARCH, 10)
-        tracker.apply(1, ScanOutput([CarListing(URL, "Car", 110000)]))
+        self.search, _ = self.state.add_search(1, SEARCH, 10)
+        tracker.apply(1, self.search.id, ScanOutput([CarListing(URL, "Car", 110000)]))
         real = CarListing(URL, "Car", 90000, attributes={"price_before": 200000})
-        self.assertEqual(tracker.apply(1, ScanOutput([real])).drops, [])
+        self.assertEqual(tracker.apply(1, self.search.id, ScanOutput([real])).drops, [])
 
     def test_ads_left_out_of_results_are_not_rechecked(self):
         tracker = AdTracker(self.state.ads)
-        self.state.set_search(1, SEARCH, 10)
-        tracker.apply(1, ScanOutput([CarListing(URL, "Car", 90000)]))
-        tracker.apply(1, ScanOutput([], left_search=[CarListing(URL, "Car", 150000, detailed=True)]))
-        self.assertEqual(self.state.ads.chat_search_urls(1), frozenset())
+        self.search, _ = self.state.add_search(1, SEARCH, 10)
+        tracker.apply(1, self.search.id, ScanOutput([CarListing(URL, "Car", 90000)]))
+        tracker.apply(1, self.search.id, ScanOutput([], left_search=[CarListing(URL, "Car", 150000, detailed=True)]))
+        self.assertEqual(self.state.ads.search_urls(self.search.id), frozenset())
         self.assertEqual(self.state.ads.get("6rg1e7dp").price, 150000)
 
     def test_stop_keeps_ad_history(self):
-        self.state.set_search(1, SEARCH, 10)
-        self.state.save_listings(1, [CarListing(URL, "Car", 90000)])
-        self.state.stop_search(1)
-        self.assertEqual(self.state.seen_count(1), 0)
+        self.search, _ = self.state.add_search(1, SEARCH, 10)
+        self.state.save_listings(self.search, [CarListing(URL, "Car", 90000)])
+        self.state.stop_search(self.search.id)
+        self.assertEqual(self.state.seen_count(self.search.id), 0)
         self.assertEqual(self.count(ads), 1)
 
     def test_known_ads_are_shared_between_chats(self):
         tracker = AdTracker(self.state.ads)
-        tracker.apply(1, ScanOutput([CarListing(URL, "Car", 90000, 40000, detailed=True)]))
-        result = tracker.apply(2, ScanOutput([CarListing(URL, "Car", 90000)]))
+        first, _ = self.state.add_search(1, SEARCH, 10)
+        second, _ = self.state.add_search(2, SEARCH, 10)
+        tracker.apply(1, first.id, ScanOutput([CarListing(URL, "Car", 90000, 40000, detailed=True)]))
+        result = tracker.apply(2, second.id, ScanOutput([CarListing(URL, "Car", 90000)]))
         self.assertEqual(result.new[0].km, 40000)
-        self.assertIn(URL, tracker.plan(2).known)
+        self.assertIn(URL, tracker.plan(second.id).known)
 
 
 class MigrationTests(unittest.TestCase):
@@ -290,7 +292,8 @@ class MigrationTests(unittest.TestCase):
             db.close()
 
             state = BotState(str(path))
-            self.assertEqual(state.active_searches(), [(1, "https://www.yad2.co.il/vehicles/cars?a=1", 10)])
+            [search] = state.active_searches()
+            self.assertEqual((search.chat_id, search.url, search.interval_minutes), (1, "https://www.yad2.co.il/vehicles/cars?a=1", 10))
             self.assertTrue(state.is_admin(7))
             self.assertEqual(state.previous_listings(1)[URL[:-8] + "abc"].price, 90000)
             self.assertEqual(state.previous_listings(2)[URL[:-8] + "abc"].price, 95000)
@@ -397,12 +400,12 @@ class ScanFailureTests(unittest.IsolatedAsyncioTestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             state = BotState(str(Path(directory) / "bot.sqlite3"))
-            state.set_search(1, SEARCH, 10)
+            search, _ = state.add_search(1, SEARCH, 10)
             scanner = Scanner(state)
             context = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
             error = CustomException("Yad2 requested browser validation", ErrorCode.CAPTCHA_TIMEOUT)
             with patch("bot.scanner._run_scraper_sync", side_effect=error):
-                await scanner._run_scan(context, 1, SEARCH, False)
+                await scanner._run_scan(context, search)
             text = context.bot.send_message.await_args.args[1]
             self.assertIn("Yad2 requested browser validation", text)
 

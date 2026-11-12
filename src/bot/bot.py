@@ -30,6 +30,7 @@ from bot.handlers import (
     search_link_prompt,
     start_command,
     status_command,
+    stop_callback,
     stop_command,
     url_search_message,
     year_max_callback,
@@ -37,6 +38,7 @@ from bot.handlers import (
     scanner,
 )
 from bot.scanner import first_delay, schedule_scan
+from car.search_url import describe_search
 from tracking.background import BackgroundPipeline
 
 
@@ -51,11 +53,37 @@ async def restore_searches(app: Application) -> None:
     pipeline.busy = scanner.is_scanning
     pipeline.start()
     app.bot_data["pipeline"] = pipeline
-    for chat_id, url, interval in scanner.state.active_searches():
-        if scanner.access_check(chat_id):
-            first = first_delay(scanner.scan_log.last_started(chat_id), interval)
-            schedule_scan(app.job_queue, scanner, chat_id, url, interval, first=first)
-    logger.info("Restored saved searches", count=len(scanner.state.active_searches()))
+    restored = sync_searches(app.job_queue)
+    logger.info("Restored saved searches", count=restored)
+    # Searches added or stopped on the dashboard are picked up within a minute.
+    app.job_queue.run_repeating(_sync_job, interval=30, first=30, name="sync_searches")
+
+
+def sync_searches(job_queue) -> int:
+    """Schedule saved searches that have no scan job yet; drop jobs of deleted searches."""
+    saved = {search.id: search for search in scanner.state.all_searches() if scanner.access_check(search.chat_id)}
+    scheduled = set()
+    for job in job_queue.jobs():
+        if job.name and job.name.startswith("scan_") and isinstance(job.data, int):
+            if job.data in saved:
+                scheduled.add(job.data)
+            else:
+                job.schedule_removal()
+    for search in saved.values():
+        if search.id not in scheduled and search.interval_minutes > 0:
+            first = first_delay(scanner.scan_log.last_started(search.id), search.interval_minutes)
+            schedule_scan(job_queue, scanner, search, first=first)
+    return len(saved)
+
+
+async def _sync_job(context) -> None:
+    for search in scanner.state.searches_added_on_dashboard():
+        await context.bot.send_message(
+            search.chat_id,
+            f"✅ Search added on the dashboard: {describe_search(search.url)}. "
+            f"I'll check it every {search.interval_minutes} minutes.",
+        )
+    sync_searches(context.job_queue)
 
 
 async def stop_scan_workers(app: Application) -> None:
@@ -132,6 +160,7 @@ def create_bot() -> Application:
     app.add_handler(CallbackQueryHandler(access.request_callback, pattern=r"^access_(approve|deny):[0-9]+$"))
     app.add_handler(url_handler)
     app.add_handler(CommandHandler("stop", stop_command))
+    app.add_handler(CallbackQueryHandler(stop_callback, pattern=r"^stop_search:(all|[0-9]+)$"))
     app.add_handler(CommandHandler("status", status_command))
     for command in ("allow", "deny", "whitelist", "requests", "promote", "demote"):
         app.add_handler(CommandHandler(command, access.admin_command))

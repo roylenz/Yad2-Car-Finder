@@ -111,3 +111,13 @@ def build_confirm_keyboard() -> InlineKeyboardMarkup:
             ]
         ]
     )
+
+
+def build_stop_keyboard(searches: list[tuple[int, str]]) -> InlineKeyboardMarkup:
+    """One button per search (id, description), plus stopping all of them."""
+    rows = [
+        [InlineKeyboardButton(f"⏹️ {label[:60]}", callback_data=f"stop_search:{search_id}")]
+        for search_id, label in searches
+    ]
+    rows.append([InlineKeyboardButton("⏹️ Stop all", callback_data="stop_search:all")])
+    return InlineKeyboardMarkup(rows)

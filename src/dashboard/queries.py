@@ -8,7 +8,10 @@ from sqlalchemy import Engine, and_, case, exists, func, or_, select, true
 from storage import cars
 from storage.db import utcnow
 from tracking.tracker import price_floor, search_max_price
-from storage.schema import ad_snapshots, ads, analysis_results, chat_ads, photos, scans, searches
+from car.search_url import describe_search
+from storage.schema import (
+    access, ad_snapshots, admins, ads, analysis_results, chat_ads, photos, scans, searches,
+)
 
 def _car_key(table):
     return func.coalesce(table.c.car_id, table.c.token)
@@ -493,10 +496,13 @@ def group_points(rows: list, by_sub_model: bool) -> list[Group]:
 
 @dataclass
 class SearchStatus:
+    id: int
     chat_id: int
     url: str
+    description: str
     interval_minutes: int
     next_scan_at: datetime.datetime | None
+    added_from: str | None
     active: object | None  # the queued or running scan, if any
     last: object | None  # the latest finished scan
 
@@ -504,12 +510,12 @@ class SearchStatus:
 def search_statuses(engine: Engine) -> list[SearchStatus]:
     """Every saved search with its next scheduled scan, current scan and latest result."""
     with engine.connect() as db:
-        rows = db.execute(select(searches).order_by(searches.c.chat_id)).all()
+        rows = db.execute(select(searches).order_by(searches.c.chat_id, searches.c.id)).all()
         statuses = []
         for row in rows:
             latest = db.execute(
                 select(scans)
-                .where(scans.c.chat_id == row.chat_id)
+                .where(scans.c.search_id == row.id)
                 .order_by(scans.c.id.desc())
                 .limit(20)
             ).all()
@@ -519,16 +525,31 @@ def search_statuses(engine: Engine) -> list[SearchStatus]:
             )
             statuses.append(
                 SearchStatus(
-                    row.chat_id, row.url, row.interval_minutes, row.next_scan_at, active, last
+                    row.id, row.chat_id, row.url, describe_search(row.url), row.interval_minutes,
+                    row.next_scan_at, row.added_from, active, last,
                 )
             )
     return statuses
 
 
-def scan_history(engine: Engine, limit: int = 200, chat_id: int | None = None) -> list:
+def known_chats(engine: Engine) -> list[int]:
+    """Chats a search can be added for: ones with searches, alerts or bot access."""
+    with engine.connect() as db:
+        found = set(db.execute(select(searches.c.chat_id)).scalars())
+        found |= set(db.execute(select(chat_ads.c.chat_id).distinct()).scalars())
+        found |= set(db.execute(select(access.c.user_id).where(access.c.allowed.is_(True))).scalars())
+        found |= set(db.execute(select(admins.c.user_id)).scalars())
+    return sorted(found)
+
+
+def scan_history(
+    engine: Engine, limit: int = 200, chat_id: int | None = None, search_id: int | None = None
+) -> list:
     statement = select(scans).order_by(scans.c.id.desc()).limit(limit)
     if chat_id is not None:
         statement = statement.where(scans.c.chat_id == chat_id)
+    if search_id is not None:
+        statement = statement.where(scans.c.search_id == search_id)
     with engine.connect() as db:
         return db.execute(statement).all()
 

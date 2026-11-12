@@ -1,18 +1,45 @@
 {% extends "base.html" %}
 {% block title %}Scans · Yad2 Car Finder{% endblock %}
-{% block head %}<meta http-equiv="refresh" content="20">{% endblock %}
+{% block head %}
+<style>
+  .notice { border-color: var(--good); }
+  .notice.error { border-color: var(--critical); color: var(--critical); }
+  form.add-search { display: grid; gap: 10px; }
+  form.add-search label { display: grid; gap: 4px; color: var(--text-secondary); font-size: 13px; }
+  form.add-search .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
+  form.add-search input, form.add-search select, form button {
+    font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface-1); color: var(--text-primary); min-width: 0;
+  }
+  form.add-search input { width: 100%; }
+  form.add-search button { background: var(--accent); color: #fff; border-color: var(--accent); cursor: pointer; }
+  form button.stop { color: var(--critical); border-color: var(--critical); cursor: pointer; font-size: 13px; padding: 3px 10px; }
+</style>
+{% endblock %}
 {% block content %}
 <h1>Scans</h1>
-<p class="muted">Times are Israel time. This page refreshes every 20 seconds.</p>
+<p class="muted">Times are Israel time. This page refreshes every 20 seconds while you're not typing a search.</p>
+<script>
+  setInterval(() => {
+    const field = document.querySelector("form.add-search input[name=url]");
+    if (!field || (!field.value && document.activeElement !== field)) location.reload();
+  }, 20000);
+</script>
 
+{% if notice %}<div class="card notice" style="margin-bottom:12px">{{ notice }}</div>{% endif %}
+{% if error %}<div class="card notice error" style="margin-bottom:12px">{{ error }}</div>{% endif %}
+
+<h2 style="margin-top:0">Searches</h2>
 {% if not searches %}
-<div class="card"><p class="muted">No saved searches. Send the bot a Yad2 search link to start one.</p></div>
+<div class="card" style="margin-bottom:12px"><p class="muted" style="margin:0">No saved searches. Add one below or send the bot a Yad2 search link.</p></div>
 {% endif %}
 <div class="tiles">
 {% for search in searches %}
   <div class="card">
+    <div style="font-weight:600" dir="auto">{{ search.description }}</div>
     <div class="secondary">Chat {{ search.chat_id }} · every {{ search.interval_minutes }} min ·
-      <a href="{{ search.url }}" target="_blank" rel="noopener">search on Yad2</a></div>
+      <a href="{{ search.url }}" target="_blank" rel="noopener">search on Yad2</a> ·
+      <a href="/scans?search={{ search.id }}">history</a></div>
     {% if search.active and search.active.status == "running" %}
       <div style="margin-top:8px"><span class="badge running">Scanning</span>
         for {{ duration(search.active.started_at) }}</div>
@@ -34,11 +61,37 @@
     <div class="muted" style="margin-top:4px">Last scan {{ search.last.status }}, {{ search.last.finished_at | when }}
       {% if search.last.status == "ok" %}· {{ search.last.results | number }} results{% endif %}</div>
     {% endif %}
+    <form method="post" action="/searches/{{ search.id }}/stop" style="margin-top:10px">
+      <button type="submit" class="stop">Stop this search</button>
+    </form>
   </div>
 {% endfor %}
 </div>
 
-<h2>History{% if chat is not none %} · chat {{ chat }} <a href="/scans" class="muted">(all)</a>{% endif %}</h2>
+<h2>Add a search</h2>
+<div class="card">
+  <form method="post" action="/searches" class="add-search">
+    <label>Yad2 search link
+      <input type="url" name="url" required placeholder="https://www.yad2.co.il/vehicles/cars?…" dir="ltr">
+    </label>
+    <div class="row">
+      <label>Alerts go to
+        <select name="chat" required>
+          {% for chat_id in chats %}<option value="{{ chat_id }}">Chat {{ chat_id }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Check every
+        <select name="interval">
+          {% for minutes in intervals %}<option value="{{ minutes }}" {{ "selected" if minutes == 10 }}>{{ minutes }} min</option>{% endfor %}
+        </select>
+      </label>
+      <button type="submit">Add search</button>
+    </div>
+  </form>
+  <p class="muted" style="margin:8px 0 0">Set the filters on Yad2, copy the results page's address and paste it here. The bot announces the search in the chat and scans it within a minute.</p>
+</div>
+
+<h2>History{% if chat is not none %} · chat {{ chat }} <a href="/scans" class="muted">(all)</a>{% endif %}{% if search_filter is not none %} · one search <a href="/scans" class="muted">(all)</a>{% endif %}</h2>
 <p class="muted">Last 24 h:
   {% for status, count in counts | dictsort %}{{ count }} {{ status }}{{ ", " if not loop.last }}{% else %}no scans{% endfor %}
 </p>

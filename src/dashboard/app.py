@@ -5,17 +5,19 @@ Run: `uvicorn --factory --app-dir src dashboard.app:create_app`.
 
 import datetime
 import json
+import os
 import uuid
 from zoneinfo import ZoneInfo
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from PIL import Image
 from sqlalchemy import Engine
 
+from car.search_url import describe_search, normalize_search_url
 from dashboard import auth, fields, queries
 from processing import plates
 from processing.processors.claude_condition import ClaudeConditionProcessor
@@ -23,6 +25,7 @@ from processing.registry import enabled_processors
 from storage.background_status import read_status
 from storage.db import data_dir, default_database_url, get_engine, utcnow
 from storage.photos import LocalPhotoStore
+from storage.searches import SearchStore
 
 _TEMPLATES = Path(__file__).parent / "templates"
 _THUMB_WIDTH = 480
@@ -141,11 +144,16 @@ def _change_summary(changes: dict | None) -> str:
     return "; ".join(parts)
 
 
+SEARCH_INTERVALS = (5, 10, 15, 30, 60)
+MAX_SEARCHES_PER_CHAT = int(os.getenv("MAX_SEARCHES_PER_CHAT", "5"))
+
+
 def create_app(engine: Engine | None = None, store=None, authenticator=None) -> FastAPI:
     engine = engine or get_engine(default_database_url())
     store = store or LocalPhotoStore()
     authenticator = authenticator or auth.from_env()
     thumbs_dir = data_dir() / "thumbs"
+    search_store = SearchStore(engine)
 
     # Same .env as the bot, so this matches what the bot runs.
     processors = enabled_processors()
@@ -189,19 +197,64 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
         )
 
     @pages.get("/scans", response_class=HTMLResponse)
-    def scan_page(request: Request, chat: str = ""):
+    def scan_page(request: Request, chat: str = "", search: str = "", notice: str = "", error: str = ""):
         chat_id = int(chat) if chat.lstrip("-").isdigit() else None
+        search_id = int(search) if search.isdigit() else None
         return templates.TemplateResponse(
             request,
             "scans.html",
             {
                 "searches": queries.search_statuses(engine),
-                "history": queries.scan_history(engine, chat_id=chat_id),
+                "history": queries.scan_history(engine, chat_id=chat_id, search_id=search_id),
                 "counts": queries.scan_counts(engine, utcnow() - datetime.timedelta(days=1)),
                 "chat": chat_id,
+                "search_filter": search_id,
+                "chats": queries.known_chats(engine),
+                "intervals": SEARCH_INTERVALS,
+                "notice": notice[:200],
+                "error": error[:200],
                 "nav": "scans",
             },
         )
+
+    def _same_origin(request: Request) -> None:
+        """Forms post only from this site (blocks other pages submitting them)."""
+        origin = request.headers.get("origin") or request.headers.get("referer")
+        if origin and urlsplit(origin).netloc != request.headers.get("host"):
+            raise HTTPException(403, "Cross-site form submission")
+
+    @pages.post("/searches")
+    async def add_search(request: Request):
+        _same_origin(request)
+        form = dict(parse_qsl((await request.body()).decode()))
+        try:
+            url = normalize_search_url(form.get("url", ""))
+            chat_id = int(form.get("chat", ""))
+            interval = int(form.get("interval", "10"))
+        except ValueError as error:
+            message = str(error) if "Yad2" in str(error) or "link" in str(error) else "Fill in the link, chat and interval."
+            return RedirectResponse(f"/scans?{urlencode({'error': message})}", status_code=303)
+        if interval not in SEARCH_INTERVALS:
+            return RedirectResponse(f"/scans?{urlencode({'error': 'Pick one of the listed intervals.'})}", status_code=303)
+        chat_searches = search_store.chat_searches(chat_id)
+        if any(item.url == url for item in chat_searches):
+            return RedirectResponse(f"/scans?{urlencode({'error': 'That chat already tracks this search.'})}", status_code=303)
+        if len(chat_searches) >= MAX_SEARCHES_PER_CHAT:
+            message = f"Chat {chat_id} already has {MAX_SEARCHES_PER_CHAT} searches. Stop one first."
+            return RedirectResponse(f"/scans?{urlencode({'error': message})}", status_code=303)
+        search_store.add_search(chat_id, url, interval, added_from="dashboard")
+        message = f"Added: {describe_search(url)}. The bot starts scanning it within a minute."
+        return RedirectResponse(f"/scans?{urlencode({'notice': message})}", status_code=303)
+
+    @pages.post("/searches/{search_id}/stop")
+    def stop_search(request: Request, search_id: int):
+        _same_origin(request)
+        search = search_store.get_search(search_id)
+        if search is None:
+            raise HTTPException(404, "Search not found")
+        search_store.stop_search(search_id)
+        message = f"Stopped: {describe_search(search.url)}. Its ads stay in the catalog."
+        return RedirectResponse(f"/scans?{urlencode({'notice': message})}", status_code=303)
 
     @pages.get("/background", response_class=HTMLResponse)
     def background_page(request: Request):

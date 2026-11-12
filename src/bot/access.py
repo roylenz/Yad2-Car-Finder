@@ -8,6 +8,7 @@ from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from bot.scanner import Scanner
 from bot.menu import set_admin_menu
+from bot.scanner import unschedule_scan
 
 
 def parse_ids(value: str) -> set[int]:
@@ -231,10 +232,9 @@ class AccessControl:
         if allowed:
             self.scanner.state.resolve_request(user_id, True)
         else:
-            self.scanner.state.stop_search(user_id)
-            for suffix in ("", "_once"):
-                for job in context.job_queue.get_jobs_by_name(f"scan_{user_id}{suffix}"):
-                    job.schedule_removal()
+            for search in self.scanner.state.chat_searches(user_id):
+                unschedule_scan(context.job_queue, search.id)
+            self.scanner.state.stop_chat(user_id)
         await update.message.reply_text(f"{'Allowed' if allowed else 'Removed'} user {user_id}.")
         try:
             await context.bot.send_message(

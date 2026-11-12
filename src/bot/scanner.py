@@ -10,8 +10,11 @@ from common.exceptions import CustomException
 from common.logger import logger
 from telegram.ext import ContextTypes, JobQueue
 
-from bot.state import BotState
 import datetime
+import time
+
+from bot.state import BotState, Search
+from car.search_url import describe_search
 
 from storage.db import utcnow
 from storage.scans import ScanLog
@@ -63,29 +66,35 @@ def format_listing(listing: CarListing, previous_price: int | None = None) -> st
     return "\n".join(lines)
 
 
-def schedule_scan(
-    job_queue: JobQueue, scanner: "Scanner", chat_id: int, url: str, interval: int, first: int = 2
-) -> None:
+def _job_name(search_id: int) -> str:
+    return f"scan_{search_id}"
+
+
+def unschedule_scan(job_queue: JobQueue, search_id: int) -> None:
     for suffix in ("", "_once"):
-        for job in job_queue.get_jobs_by_name(f"scan_{chat_id}{suffix}"):
+        for job in job_queue.get_jobs_by_name(f"{_job_name(search_id)}{suffix}"):
             job.schedule_removal()
-    scanner.scan_log.set_next(chat_id, utcnow() + datetime.timedelta(seconds=first))
-    if interval > 0:
+
+
+def schedule_scan(job_queue: JobQueue, scanner: "Scanner", search: Search, first: int = 2) -> None:
+    unschedule_scan(job_queue, search.id)
+    scanner.scan_log.set_next(search.id, utcnow() + datetime.timedelta(seconds=first))
+    if search.interval_minutes > 0:
         job_queue.run_repeating(
             scanner.scan_job,
-            interval=interval * 60,
+            interval=search.interval_minutes * 60,
             first=first,
-            chat_id=chat_id,
-            name=f"scan_{chat_id}",
-            data=url,
+            chat_id=search.chat_id,
+            name=_job_name(search.id),
+            data=search.id,
         )
     else:
         job_queue.run_once(
             scanner.scan_job,
             when=first,
-            chat_id=chat_id,
-            name=f"scan_{chat_id}_once",
-            data=url,
+            chat_id=search.chat_id,
+            name=f"{_job_name(search.id)}_once",
+            data=search.id,
         )
 
 
@@ -115,16 +124,20 @@ class Scanner:
         self.state = state or BotState()
         self.tracker = AdTracker(self.state.ads)
         self.scan_log = ScanLog(self.state.engine)
-        self._scan_ids: dict[tuple[int, str], int] = {}
+        self._scan_ids: dict[int, int] = {}  # search id -> scan log id
         self.on_scan_complete: Callable[[], None] = lambda: None
-        self._scan_locks: dict[int, asyncio.Lock] = {}
+        self._chat_locks: dict[int, asyncio.Lock] = {}
         self.access_check: Callable[[int], bool] = lambda _chat_id: True
-        self.max_concurrent_scans = int(os.getenv("MAX_CONCURRENT_SCANS", "2"))
+        self.max_concurrent_scans = int(os.getenv("MAX_CONCURRENT_SCANS", "1"))
         if self.max_concurrent_scans < 1:
             raise ValueError("MAX_CONCURRENT_SCANS must be at least 1")
-        self._queue: asyncio.Queue[tuple[ContextTypes.DEFAULT_TYPE, int, str]] = asyncio.Queue()
-        self._pending: set[tuple[int, str]] = set()
-        self._running: set[tuple[int, str]] = set()
+        # Back-to-back page loads trip Yad2's bot check, so scans start this long apart.
+        self.scan_gap_seconds = float(os.getenv("SCAN_GAP_SECONDS", "45"))
+        self._gap_lock = asyncio.Lock()
+        self._last_scan_end: float | None = None
+        self._queue: asyncio.Queue[tuple[ContextTypes.DEFAULT_TYPE, int]] = asyncio.Queue()
+        self._pending: set[int] = set()
+        self._running: set[int] = set()
         self._workers: list[asyncio.Task] = []
 
     def start_workers(self) -> None:
@@ -143,78 +156,87 @@ class Scanner:
             await asyncio.gather(*self._workers, return_exceptions=True)
         self._workers.clear()
 
-    def queue_status(self, chat_id: int) -> str:
-        if any(key[0] == chat_id for key in self._running):
+    def queue_status(self, search_id: int) -> str:
+        if search_id in self._running:
             return "Scanning now"
-        if any(key[0] == chat_id for key in self._pending):
+        if search_id in self._pending:
             return f"Queued ({self._queue.qsize()} waiting)"
         return "Waiting for next check"
 
-    def _get_lock(self, chat_id: int) -> asyncio.Lock:
-        if chat_id not in self._scan_locks:
-            self._scan_locks[chat_id] = asyncio.Lock()
-        return self._scan_locks[chat_id]
+    def _chat_lock(self, chat_id: int) -> asyncio.Lock:
+        if chat_id not in self._chat_locks:
+            self._chat_locks[chat_id] = asyncio.Lock()
+        return self._chat_locks[chat_id]
 
-    def get_seen_count(self, chat_id: int) -> int:
-        return self.state.seen_count(chat_id)
+    def get_seen_count(self, search_id: int) -> int:
+        return self.state.seen_count(search_id)
+
+    def _current(self, search_id: int) -> Search | None:
+        search = self.state.get_search(search_id)
+        if search is None or not self.access_check(search.chat_id):
+            return None
+        return search
 
     async def scan_job(self, context: ContextTypes.DEFAULT_TYPE) -> None:
-        chat_id = context.job.chat_id
-        url = context.job.data
-        active = self.state.get_search(chat_id)
-        if active is None or active[0] != url or not self.access_check(chat_id):
+        search = self._current(context.job.data)
+        if search is None:
             return
-
-        self.scan_log.set_next(chat_id, _next_run(context.job, active[1]))
-        key = (chat_id, url)
-        if key in self._pending:
-            logger.info("Scan already queued or running, skipping", chat_id=chat_id)
+        self.scan_log.set_next(search.id, _next_run(context.job, search.interval_minutes))
+        if search.id in self._pending:
+            logger.info("Scan already queued or running, skipping", search_id=search.id)
             return
+        self._pending.add(search.id)
+        self._scan_ids[search.id] = self.scan_log.queued(search.chat_id, search.url, search.id)
+        self._queue.put_nowait((context, search.id))
+        logger.info("Scan queued", chat_id=search.chat_id, search_id=search.id, queue_length=self._queue.qsize())
 
-        self._pending.add(key)
-        self._scan_ids[key] = self.scan_log.queued(chat_id, url)
-        self._queue.put_nowait((context, chat_id, url))
-        logger.info("Scan queued", chat_id=chat_id, queue_length=self._queue.qsize())
+    async def _wait_for_gap(self) -> None:
+        async with self._gap_lock:
+            if self._last_scan_end is not None:
+                remaining = self.scan_gap_seconds - (time.monotonic() - self._last_scan_end)
+                if remaining > 0:
+                    await asyncio.sleep(remaining)
+            self._last_scan_end = time.monotonic()  # with several workers, staggers their starts
 
     async def _worker(self) -> None:
         while True:
-            context, chat_id, url = await self._queue.get()
-            key = (chat_id, url)
-            self._running.add(key)
-            scan_id = self._scan_ids.get(key)
+            context, search_id = await self._queue.get()
+            scan_id = self._scan_ids.get(search_id)
             try:
-                active = self.state.get_search(chat_id)
-                if active is None or active[0] != url or not self.access_check(chat_id):
+                search = self._current(search_id)
+                if search is None:
                     self._log_cancelled(scan_id)
                     continue
-                async with self._get_lock(chat_id):
-                    active = self.state.get_search(chat_id)
-                    if active is None or active[0] != url or not self.access_check(chat_id):
+                # One chat's searches scan one after another: they share its alert state.
+                async with self._chat_lock(search.chat_id):
+                    await self._wait_for_gap()
+                    self._running.add(search_id)
+                    search = self._current(search_id)
+                    if search is None:
                         self._log_cancelled(scan_id)
                         continue
                     if scan_id is not None:
                         self.scan_log.started(scan_id)
                     try:
-                        await self._run_scan(context, chat_id, url, active[1] == 0)
+                        await self._run_scan(context, search)
                     finally:
-                        if active[1] == 0 and self.state.get_search(chat_id) == active:
-                            self.state.stop_search(chat_id)
-                            context.chat_data["scan_active"] = False
+                        self._last_scan_end = time.monotonic()
+                        if search.interval_minutes == 0 and self.state.get_search(search.id) == search:
+                            self.state.stop_search(search.id)
             except Exception as error:
-                logger.error("scan worker failed", chat_id=chat_id, error=str(error))
+                logger.error("scan worker failed", search_id=search_id, error=str(error))
                 if scan_id is not None:
                     self.scan_log.failed(scan_id, f"Internal error: {error}")
             finally:
-                self._scan_ids.pop(key, None)
-                self._running.discard(key)
-                self._pending.discard(key)
+                self._scan_ids.pop(search_id, None)
+                self._running.discard(search_id)
+                self._pending.discard(search_id)
                 self._queue.task_done()
 
-    async def _run_scan(
-        self, context: ContextTypes.DEFAULT_TYPE, chat_id: int, url: str, one_time: bool
-    ) -> None:
-        plan = self.tracker.plan(chat_id)
-        scan_id = self._scan_ids.get((chat_id, url))
+    async def _run_scan(self, context: ContextTypes.DEFAULT_TYPE, search: Search) -> None:
+        chat_id, url = search.chat_id, search.url
+        plan = self.tracker.plan(search.id)
+        scan_id = self._scan_ids.get(search.id)
 
         def progress(text: str) -> None:
             if scan_id is not None:
@@ -223,33 +245,34 @@ class Scanner:
                 except Exception as error:  # progress is best effort
                     logger.warning("Could not record scan progress", error=str(error))
 
+        label = self._label(search)
         try:
-            logger.info("Scan started", chat_id=chat_id, search_url=url)
+            logger.info("Scan started", chat_id=chat_id, search_id=search.id, search_url=url)
             output = await asyncio.to_thread(_run_scraper_sync, url, plan, progress)
-            logger.info("Scan completed", chat_id=chat_id, results_count=len(output.listings))
+            logger.info("Scan completed", chat_id=chat_id, search_id=search.id, results_count=len(output.listings))
         except CustomException as error:
             logger.error(
-                "Scan failed", chat_id=chat_id, error_code=int(error.error_code), reason=error.message
+                "Scan failed", chat_id=chat_id, search_id=search.id,
+                error_code=int(error.error_code), reason=error.message,
             )
             self._log_failed(scan_id, error.message)
-            await self._send_safe(context, chat_id, f"⚠️ Scan failed: {error.message}")
+            await self._send_safe(context, chat_id, f"⚠️ Scan failed{label}: {error.message}")
             return
         except Exception as error:
-            logger.error("Unexpected scan error", chat_id=chat_id, error=str(error))
+            logger.error("Unexpected scan error", chat_id=chat_id, search_id=search.id, error=str(error))
             self._log_failed(scan_id, f"Unexpected error: {error}")
-            await self._send_safe(context, chat_id, f"⚠️ Scan failed unexpectedly: {error}")
+            await self._send_safe(context, chat_id, f"⚠️ Scan failed unexpectedly{label}: {error}")
             return
 
-        active = self.state.get_search(chat_id)
-        if active is None or active[0] != url or not self.access_check(chat_id):
+        if self._current(search.id) is None:
             # Keep what the scan learned about the ads, without alert state for this chat.
             self.state.ads.record(output.listings + output.left_search)
             self.state.ads.mark_removed(output.removed)
             self.on_scan_complete()
-            self._log_cancelled(scan_id, "Search changed or stopped during the scan")
+            self._log_cancelled(scan_id, "Search stopped during the scan")
             return
 
-        result = self.tracker.apply(chat_id, output, search_url=url)
+        result = self.tracker.apply(chat_id, search.id, output, search_url=url)
         if scan_id is not None:
             self.scan_log.finished(
                 scan_id,
@@ -261,22 +284,29 @@ class Scanner:
             )
         self.on_scan_complete()
         if result.new:
-            await self._send_safe(context, chat_id, f"🚗 {len(result.new)} new car(s) found")
+            await self._send_safe(context, chat_id, f"🚗 {len(result.new)} new car(s) found{label}")
             await self._send_listings(context, chat_id, [format_listing(item) for item in result.new])
         if result.drops:
-            await self._send_safe(context, chat_id, f"📉 {len(result.drops)} price drop(s) found")
+            await self._send_safe(context, chat_id, f"📉 {len(result.drops)} price drop(s) found{label}")
             await self._send_listings(
                 context,
                 chat_id,
                 [format_listing(item, old_price) for item, old_price in result.drops],
             )
-        if one_time and not result.new and not result.drops:
-            await self._send_safe(context, chat_id, "No new cars or price drops found.")
+        if search.interval_minutes == 0 and not result.new and not result.drops:
+            await self._send_safe(context, chat_id, f"No new cars or price drops found{label}.")
+
+    def _label(self, search: Search) -> str:
+        """' in <search>' when the chat has several searches, so alerts say which one."""
+        searches = self.state.chat_searches(search.chat_id)
+        if len(searches) < 2:
+            return ""
+        return f" in {describe_search(search.url)}"
 
     def is_scanning(self) -> bool:
         return bool(self._running)
 
-    def _log_cancelled(self, scan_id: int | None, reason: str = "Search changed or stopped") -> None:
+    def _log_cancelled(self, scan_id: int | None, reason: str = "Search stopped") -> None:
         if scan_id is not None:
             self.scan_log.cancelled(scan_id, reason)
 

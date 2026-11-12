@@ -14,11 +14,15 @@ class ScanLog:
     def __init__(self, engine: Engine) -> None:
         self.engine = engine
 
-    def queued(self, chat_id: int, search_url: str) -> int:
+    def queued(self, chat_id: int, search_url: str, search_id: int | None = None) -> int:
         with self.engine.begin() as db:
             return db.execute(
                 scans.insert().values(
-                    chat_id=chat_id, search_url=search_url, status="queued", queued_at=utcnow()
+                    chat_id=chat_id,
+                    search_id=search_id,
+                    search_url=search_url,
+                    status="queued",
+                    queued_at=utcnow(),
                 )
             ).inserted_primary_key[0]
 
@@ -70,18 +74,19 @@ class ScanLog:
                 )
             ).rowcount
 
-    def set_next(self, chat_id: int, when: datetime.datetime | None) -> None:
+    def set_next(self, search_id: int, when: datetime.datetime | None) -> None:
         with self.engine.begin() as db:
             db.execute(
-                update(searches).where(searches.c.chat_id == chat_id).values(next_scan_at=when)
+                update(searches).where(searches.c.id == search_id).values(next_scan_at=when)
             )
 
-    def last_started(self, chat_id: int) -> datetime.datetime | None:
-        """When this chat's most recent scan started (naive UTC)."""
+    def last_started(self, search_id: int | None = None) -> datetime.datetime | None:
+        """When this search's (or, without one, any search's) latest scan started (naive UTC)."""
+        statement = select(func.max(scans.c.started_at))
+        if search_id is not None:
+            statement = statement.where(scans.c.search_id == search_id)
         with self.engine.connect() as db:
-            return db.execute(
-                select(func.max(scans.c.started_at)).where(scans.c.chat_id == chat_id)
-            ).scalar_one()
+            return db.execute(statement).scalar_one()
 
     def recent(self, limit: int = 100, chat_id: int | None = None) -> list:
         statement = select(scans).order_by(scans.c.queued_at.desc(), scans.c.id.desc()).limit(limit)

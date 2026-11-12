@@ -6,7 +6,7 @@ from sqlalchemy import Engine, and_, delete, func, select, update
 
 from car.listing import CarListing, KnownAd
 from storage.db import upsert, utcnow
-from storage.schema import ad_snapshots, ads, chat_ads, photos
+from storage.schema import ad_snapshots, ads, chat_ads, photos, search_ads
 
 # Attributes that change on their own and are not worth a history entry.
 _VOLATILE_ATTRIBUTES = {
@@ -75,19 +75,25 @@ class AdRepository:
             ).all()
         return {row.url: _listing_from_row(row, row.last_price) for row in rows}
 
-    def chat_search_urls(self, chat_id: int) -> frozenset[str]:
-        """Ads that were in this chat's search results on the last scan and are not removed."""
+    def search_urls(self, search_id: int) -> frozenset[str]:
+        """Ads that were in this search's results on its last scan and are not removed."""
         with self.engine.connect() as db:
             rows = db.execute(
                 select(ads.c.url)
-                .join(chat_ads, chat_ads.c.token == ads.c.token)
+                .join(search_ads, search_ads.c.token == ads.c.token)
                 .where(
-                    chat_ads.c.chat_id == chat_id,
-                    chat_ads.c.in_search.is_(True),
+                    search_ads.c.search_id == search_id,
+                    search_ads.c.in_search.is_(True),
                     ads.c.removed_at.is_(None),
                 )
             ).all()
         return frozenset(row.url for row in rows)
+
+    def search_count(self, search_id: int) -> int:
+        with self.engine.connect() as db:
+            return db.execute(
+                select(func.count()).select_from(search_ads).where(search_ads.c.search_id == search_id)
+            ).scalar_one()
 
     def chat_count(self, chat_id: int) -> int:
         with self.engine.connect() as db:
@@ -254,37 +260,52 @@ class AdRepository:
         self,
         chat_id: int,
         in_results: list[CarListing],
+        now: datetime.datetime | None = None,
+    ) -> None:
+        """Remember the prices this chat was told (shared by all the chat's searches)."""
+        now = now or utcnow()
+        if not in_results:
+            return
+        with self.engine.begin() as db:
+            upsert(
+                db,
+                chat_ads,
+                [
+                    {"chat_id": chat_id, "token": listing.token, "last_price": listing.price, "first_seen_at": now}
+                    for listing in in_results
+                ],
+                ["chat_id", "token"],
+                lambda excluded: {
+                    "last_price": func.coalesce(excluded.last_price, chat_ads.c.last_price),
+                },
+            )
+
+    def save_search(
+        self,
+        search_id: int,
+        in_results: list[CarListing],
         out_of_results: list[str] = (),
         now: datetime.datetime | None = None,
     ) -> None:
-        """Remember the prices this chat was told, and which ads are in its results."""
+        """Remember which ads are in this search's results."""
         now = now or utcnow()
         with self.engine.begin() as db:
             if in_results:
                 upsert(
                     db,
-                    chat_ads,
+                    search_ads,
                     [
-                        {
-                            "chat_id": chat_id,
-                            "token": listing.token,
-                            "last_price": listing.price,
-                            "in_search": True,
-                            "first_seen_at": now,
-                        }
+                        {"search_id": search_id, "token": listing.token, "in_search": True, "first_seen_at": now}
                         for listing in in_results
                     ],
-                    ["chat_id", "token"],
-                    lambda excluded: {
-                        "last_price": func.coalesce(excluded.last_price, chat_ads.c.last_price),
-                        "in_search": True,
-                    },
+                    ["search_id", "token"],
+                    lambda excluded: {"in_search": True},
                 )
             tokens = [url.rstrip("/").rsplit("/", 1)[-1] for url in out_of_results]
             if tokens:
                 db.execute(
-                    update(chat_ads)
-                    .where(and_(chat_ads.c.chat_id == chat_id, chat_ads.c.token.in_(tokens)))
+                    update(search_ads)
+                    .where(and_(search_ads.c.search_id == search_id, search_ads.c.token.in_(tokens)))
                     .values(in_search=False)
                 )
 

@@ -8,13 +8,14 @@ import unittest.mock
 from unittest.mock import AsyncMock
 
 from bot.scanner import detect_changes, format_listing
-from bot.state import BotState
+from bot.state import BotState, Search
+from tracking.tracker import AdTracker
 from bot.access import AccessControl
 from bot.scanner import Scanner
 from bot.menu import ADMIN_COMMANDS, USER_COMMANDS
 from telegram.ext import ApplicationHandlerStop
 from car.car_finder import PageLoadError, Yad2CarFinder
-from car.listing import CarListing, KnownAd, ScanPlan
+from car.listing import CarListing, KnownAd, ScanOutput, ScanPlan
 from car.search_url import normalize_search_url, price_range, split_price, with_price
 
 EXAMPLE_URL = (
@@ -182,12 +183,13 @@ class AlertTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = str(Path(directory) / "bot.sqlite3")
             state = BotState(path)
-            state.set_search(123, EXAMPLE_URL, 10)
+            search, created = state.add_search(123, EXAMPLE_URL, 10)
+            self.assertTrue(created)
             old = CarListing("https://www.yad2.co.il/vehicles/item/abc", "Test car", 90000, 45000, 2, 2021)
-            state.save_listings(123, [old])
+            state.save_listings(search, [old])
 
             reloaded = BotState(path)
-            self.assertEqual(reloaded.active_searches(), [(123, EXAMPLE_URL, 10)])
+            self.assertEqual(reloaded.active_searches(), [Search(search.id, 123, EXAMPLE_URL, 10)])
             current = [
                 CarListing(old.url, old.title, 85000),
                 CarListing("https://www.yad2.co.il/vehicles/item/new", "New car", 80000, 30000),
@@ -201,13 +203,33 @@ class AlertTests(unittest.TestCase):
             self.assertIn("Hand: Not listed", format_listing(new[0]))
             self.assertIn("₪90,000 → ₪85,000", format_listing(*drops[0]))
 
-    def test_new_search_clears_previous_listing_prices(self):
+    def test_a_chat_keeps_several_searches_and_is_alerted_once_per_ad(self):
         with tempfile.TemporaryDirectory() as directory:
             state = BotState(str(Path(directory) / "bot.sqlite3"))
-            state.set_search(123, EXAMPLE_URL, 10)
-            state.save_listings(123, [CarListing("https://www.yad2.co.il/vehicles/item/abc", "Car", 1)])
-            state.set_search(123, EXAMPLE_URL.replace("manufacturer=334", "manufacturer=62"), 10)
-            self.assertEqual(state.seen_count(123), 0)
+            tracker = AdTracker(state.ads)
+            electric, _ = state.add_search(123, EXAMPLE_URL, 10)
+            other_url = EXAMPLE_URL.replace("manufacturer=334", "manufacturer=62")
+            other, created = state.add_search(123, other_url, 15)
+            self.assertTrue(created)
+            self.assertEqual(state.add_search(123, other_url, 30), (Search(other.id, 123, other_url, 30), False))
+            self.assertEqual([item.url for item in state.chat_searches(123)], [EXAMPLE_URL, other_url])
+
+            shared = CarListing("https://www.yad2.co.il/vehicles/item/both", "Car", 90000)
+            only_other = CarListing("https://www.yad2.co.il/vehicles/item/two", "Car", 80000)
+            self.assertEqual(len(tracker.apply(123, electric.id, ScanOutput([shared])).new), 1)
+            # The same ad in the chat's other search is not alerted again.
+            self.assertEqual(
+                [item.url for item in tracker.apply(123, other.id, ScanOutput([shared, only_other])).new],
+                [only_other.url],
+            )
+            self.assertEqual((state.seen_count(electric.id), state.seen_count(other.id)), (1, 2))
+            self.assertEqual(state.ads.search_urls(electric.id), frozenset({shared.url}))
+
+            state.stop_search(electric.id)
+            self.assertEqual(state.chat_searches(123), [Search(other.id, 123, other_url, 30)])
+            self.assertEqual(len(state.previous_listings(123)), 2)  # still remembered for the rest
+            state.stop_search(other.id)
+            self.assertEqual(state.previous_listings(123), {})
 
 
 class AccessTests(unittest.TestCase):
@@ -287,49 +309,62 @@ class AccessCommandTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ScanQueueTests(unittest.IsolatedAsyncioTestCase):
+    async def run_queue(self, searches, workers=2):
+        """Queue a scan of each search (and a duplicate of the first); record overlaps."""
+        started = asyncio.Event()
+        release = asyncio.Event()
+        running, peak, processed = set(), 0, []
+
+        class TestScanner(Scanner):
+            async def _run_scan(self, context, search):
+                nonlocal peak
+                running.add(search.chat_id)
+                peak = max(peak, len(running))
+                processed.append((search.id, context.job.chat_id))
+                if len(running) == 2 or len(searches) == 2:
+                    started.set()
+                await release.wait()
+                running.discard(search.chat_id)
+
+        scanner = TestScanner(self.state)
+        scanner.max_concurrent_scans = workers
+        scanner.scan_gap_seconds = 0
+        scanner.start_workers()
+        try:
+            for index, search in enumerate(searches):
+                context = SimpleNamespace(
+                    job=SimpleNamespace(chat_id=search.chat_id, data=search.id, next_t=None), chat_data={}
+                )
+                await scanner.scan_job(context)
+                if index == 0:
+                    await scanner.scan_job(context)  # Duplicate trigger is not queued.
+            await asyncio.wait_for(started.wait(), 2)
+            queued = scanner._queue.qsize()
+            release.set()
+            await asyncio.wait_for(scanner._queue.join(), 2)
+            return peak, queued, processed
+        finally:
+            release.set()
+            await scanner.stop_workers()
+
     async def test_two_workers_queue_third_scan_and_keep_chat_ids(self):
         with tempfile.TemporaryDirectory() as directory:
-            state = BotState(str(Path(directory) / "bot.sqlite3"))
-            for chat_id in (101, 102, 103):
-                state.set_search(chat_id, EXAMPLE_URL, 10)
+            self.state = BotState(str(Path(directory) / "bot.sqlite3"))
+            searches = [self.state.add_search(chat_id, EXAMPLE_URL, 10)[0] for chat_id in (101, 102, 103)]
+            peak, queued, processed = await self.run_queue(searches)
+            self.assertEqual((peak, queued), (2, 1))
+            self.assertEqual(processed, [(search.id, search.chat_id) for search in searches])
 
-            started = asyncio.Event()
-            release = asyncio.Event()
-            running = 0
-            peak = 0
-            processed = []
-
-            class TestScanner(Scanner):
-                async def _run_scan(self, context, chat_id, url, one_time):
-                    nonlocal running, peak
-                    running += 1
-                    peak = max(peak, running)
-                    processed.append((chat_id, context.job.chat_id))
-                    if running == 2:
-                        started.set()
-                    await release.wait()
-                    running -= 1
-
-            scanner = TestScanner(state)
-            scanner.max_concurrent_scans = 2
-            scanner.start_workers()
-            try:
-                for chat_id in (101, 102, 103):
-                    context = SimpleNamespace(
-                        job=SimpleNamespace(chat_id=chat_id, data=EXAMPLE_URL), chat_data={}
-                    )
-                    await scanner.scan_job(context)
-                    if chat_id == 101:
-                        await scanner.scan_job(context)  # Duplicate trigger is not queued.
-                await asyncio.wait_for(started.wait(), 2)
-                self.assertEqual(peak, 2)
-                self.assertEqual(scanner._queue.qsize(), 1)
-                release.set()
-                await asyncio.wait_for(scanner._queue.join(), 2)
-                self.assertEqual(processed, [(101, 101), (102, 102), (103, 103)])
-            finally:
-                release.set()
-                await scanner.stop_workers()
+    async def test_one_chats_searches_scan_one_at_a_time(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.state = BotState(str(Path(directory) / "bot.sqlite3"))
+            searches = [
+                self.state.add_search(101, EXAMPLE_URL, 10)[0],
+                self.state.add_search(101, EXAMPLE_URL.replace("334", "62"), 10)[0],
+            ]
+            peak, _queued, processed = await self.run_queue(searches)
+            self.assertEqual(peak, 1)
+            self.assertEqual([search_id for search_id, _ in processed], [search.id for search in searches])
 
 
 class FeedTests(unittest.IsolatedAsyncioTestCase):

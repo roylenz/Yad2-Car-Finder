@@ -17,13 +17,30 @@ from sqlalchemy import (
 
 metadata = MetaData()
 
+# Saved searches; a chat can have several (each scanned on its own schedule).
 searches = Table(
     "searches",
     metadata,
-    Column("chat_id", Integer, primary_key=True),
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("chat_id", Integer, nullable=False),
     Column("url", Text, nullable=False),
     Column("interval_minutes", Integer, nullable=False),
     Column("next_scan_at", DateTime),
+    Column("created_at", DateTime),
+    Column("added_from", String(16)),  # "telegram" or "dashboard"
+    Column("announced_at", DateTime),  # when the bot told the chat about a dashboard search
+    UniqueConstraint("chat_id", "url", name="uq_searches_chat_url"),
+    Index("ix_searches_chat", "chat_id"),
+)
+
+# Which ads were in each search's results on its last scan (to notice ads that leave them).
+search_ads = Table(
+    "search_ads",
+    metadata,
+    Column("search_id", Integer, ForeignKey("searches.id", ondelete="CASCADE"), primary_key=True),
+    Column("token", String(32), ForeignKey("ads.token"), primary_key=True),
+    Column("in_search", Boolean, nullable=False, default=True),
+    Column("first_seen_at", DateTime, nullable=False),
 )
 
 # One row per scan run: queued -> running -> ok / failed / cancelled / interrupted.
@@ -32,6 +49,7 @@ scans = Table(
     metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("chat_id", Integer, nullable=False),
+    Column("search_id", Integer),  # null for scans of searches that no longer exist
     Column("search_url", Text, nullable=False),
     Column("status", String(16), nullable=False),
     Column("progress", Text),
@@ -45,6 +63,7 @@ scans = Table(
     Column("removed", Integer),
     Column("details_fetched", Integer),
     Index("ix_scans_chat_queued", "chat_id", "queued_at"),
+    Index("ix_scans_search", "search_id", "queued_at"),
 )
 
 # What the bot's background pipeline is doing right now, for the dashboard (one row per worker).
@@ -163,8 +182,7 @@ chat_ads = Table(
     metadata,
     Column("chat_id", Integer, primary_key=True),
     Column("token", String(32), ForeignKey("ads.token"), primary_key=True),
-    Column("last_price", Integer),
-    Column("in_search", Boolean, nullable=False, default=True),
+    Column("last_price", Integer),  # the price this chat was last told
     Column("first_seen_at", DateTime, nullable=False),
 )
 

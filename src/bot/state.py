@@ -5,66 +5,27 @@ from sqlalchemy import delete, insert, literal, select, update
 from car.listing import CarListing
 from storage.ads import AdRepository
 from storage.db import default_database_url, get_engine, migrate, sqlite_url, upsert
-from storage.schema import access, access_meta, access_requests, admins, searches
+from storage.schema import access, access_meta, access_requests, admins
+from storage.searches import Search, SearchStore  # noqa: F401 (Search re-exported)
 
 
-class BotState:
+class BotState(SearchStore):
     def __init__(self, path: str | None = None, database_url: str | None = None) -> None:
         url = database_url or (sqlite_url(path) if path else default_database_url())
         migrate(url)
         self.engine = get_engine(url)
         self.ads = AdRepository(self.engine)
 
-    def set_search(self, chat_id: int, url: str, interval_minutes: int) -> None:
-        with self.engine.begin() as db:
-            previous = db.execute(
-                select(searches.c.url).where(searches.c.chat_id == chat_id)
-            ).first()
-            upsert(
-                db,
-                searches,
-                {"chat_id": chat_id, "url": url, "interval_minutes": interval_minutes},
-                ["chat_id"],
-                ["url", "interval_minutes"],
-            )
-        if previous is None or previous.url != url:
-            self.ads.clear_chat(chat_id)
-
-    def get_search(self, chat_id: int) -> tuple[str, int] | None:
-        with self.engine.connect() as db:
-            row = db.execute(
-                select(searches.c.url, searches.c.interval_minutes).where(
-                    searches.c.chat_id == chat_id
-                )
-            ).first()
-        return tuple(row) if row else None
-
-    def active_searches(self) -> list[tuple[int, str, int]]:
-        with self.engine.connect() as db:
-            rows = db.execute(
-                select(searches.c.chat_id, searches.c.url, searches.c.interval_minutes).where(
-                    searches.c.interval_minutes > 0
-                )
-            ).all()
-        return [tuple(row) for row in rows]
-
-    def stop_search(self, chat_id: int) -> None:
-        """Forget the chat's search and alert state; the ad history is kept."""
-        with self.engine.begin() as db:
-            db.execute(delete(searches).where(searches.c.chat_id == chat_id))
-        self.ads.clear_chat(chat_id)
-
     def previous_listings(self, chat_id: int) -> dict[str, CarListing]:
         return self.ads.chat_listings(chat_id)
 
-    def save_listings(
-        self, chat_id: int, listings: list[CarListing], out_of_results: list[str] = ()
-    ) -> None:
+    def save_listings(self, search: "Search", listings: list[CarListing]) -> None:
         self.ads.record(listings)
-        self.ads.save_chat(chat_id, listings, out_of_results)
+        self.ads.save_chat(search.chat_id, listings)
+        self.ads.save_search(search.id, listings)
 
-    def seen_count(self, chat_id: int) -> int:
-        return self.ads.chat_count(chat_id)
+    def seen_count(self, search_id: int) -> int:
+        return self.ads.search_count(search_id)
 
     def access_override(self, user_id: int) -> bool | None:
         with self.engine.connect() as db:

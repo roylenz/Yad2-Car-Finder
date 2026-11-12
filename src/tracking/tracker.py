@@ -1,4 +1,6 @@
-"""Turn a scan of one chat's search into catalog updates and the alerts that chat should get."""
+"""Turn a scan of one search into catalog updates and the alerts its chat should get.
+
+Alerts are per chat: an ad found by two of the chat's searches is alerted once."""
 
 import datetime
 from collections.abc import Iterable
@@ -81,12 +83,13 @@ class AdTracker:
     def __init__(self, ads: AdRepository) -> None:
         self.ads = ads
 
-    def plan(self, chat_id: int) -> ScanPlan:
-        return ScanPlan(known=self.ads.known_ads(), previous_urls=self.ads.chat_search_urls(chat_id))
+    def plan(self, search_id: int) -> ScanPlan:
+        return ScanPlan(known=self.ads.known_ads(), previous_urls=self.ads.search_urls(search_id))
 
     def apply(
         self,
         chat_id: int,
+        search_id: int,
         output: ScanOutput,
         now: datetime.datetime | None = None,
         search_url: str | None = None,
@@ -104,8 +107,9 @@ class AdTracker:
         # Feed results lack mileage; fill alert fields from the catalog (other searches may know).
         new = [self._complete(listing) for listing in new]
         drops = [(self._complete(listing), old_price) for listing, old_price in drops]
-        self.ads.save_chat(
-            chat_id,
+        self.ads.save_chat(chat_id, output.listings, now)
+        self.ads.save_search(
+            search_id,
             output.listings,
             [*output.removed, *(listing.url for listing in output.left_search)],
             now,

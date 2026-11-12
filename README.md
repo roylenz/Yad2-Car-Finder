@@ -20,10 +20,12 @@ Telegram bot that scrapes [Yad2](https://www.yad2.co.il/vehicles/cars) for car l
 - **Persistent tracking** - searches, alert state and the archive survive container restarts
 - **Every result, not just the first page** - Yad2 serves result pages in two layouts that order ads differently, so paging skips some ads. A search with more results than fit on one page is split into price ranges that each fit on one page, and the scan warns if it still collects fewer ads than Yad2 reports
 - **Retries and failure evidence** - a results page that fails to load is retried after 10 seconds (3 attempts). The bot tells Yad2's bot check apart from a network error or a timeout, waits up to 30 seconds for a bot check to clear by itself, and keeps a screenshot of each failure in `data/scan-failures/`
-- **Bounded concurrent scans** - a shared queue runs at most `MAX_CONCURRENT_SCANS` browser scans at once (default 2)
+- **Several searches per chat** - each chat can track up to `MAX_SEARCHES_PER_CHAT` searches (default 5), each on its own schedule. An ad that matches two of a chat's searches alerts once, and alerts say which search found them when a chat has several
+- **Searches from the dashboard** - the Scans page adds a search (paste a Yad2 link, pick the chat and interval) or stops one; the bot picks it up within a minute and tells the chat
+- **One scan at a time** - a shared queue runs at most `MAX_CONCURRENT_SCANS` browser scans at once (default 1), at least `SCAN_GAP_SECONDS` apart (default 45); back-to-back page loads trip Yad2's bot check
 - **Private access** - users request access with their name; admins approve requests and can promote other admins
 - **Structured logging** - colored console output with structured JSON kwargs, configurable log level via `LOG_LEVEL` env var
-- **Bot commands** - `/start`, `/search`, `/stop`, `/status`
+- **Bot commands** - `/start`, `/search`, `/stop` (pick which search), `/status` (all of the chat's searches)
 - **Command menu** - tap Telegram's Menu button to see commands; admins also see access controls
 
 The manufacturer picker includes all 127 makes shown in Yad2's car search filter on 2 November 2026. Model IDs come from a [Yad2 API catalog snapshot](https://github.com/SRaz-Sw/Local-Whisper-Diarization/blob/main/nextjs-v1/public/data/yad2-mappings.json) dated 20 August 2025, with current models for the five newer makes when Yad2 offered them. The model picker shows models for the selected makes. Yad2 may add makes or models after these snapshots.
@@ -53,11 +55,14 @@ on ARM64 Raspberry Pi OS and x86-64 Linux. The bot uses Telegram polling, so no
 ports need to be published. Only run one instance for a given token. Docker Compose
 stores the database and photos in the `bot_data` volume, or in the host folder set by
 `HOST_DATA_DIR` (use an SSD on a Raspberry Pi).
-Each private chat has its own saved search and alert state; the ad archive is shared, so an
-ad found by two searches is stored once. Alerts are sent only to the chat that created the search. When several scans become due together,
-they wait in a FIFO queue; repeated triggers for the same search do not pile up.
+Each chat has its own saved searches and alert state; the ad archive is shared, so an
+ad found by two searches is stored once. Alerts are sent only to the chat that owns the search, and
+once per ad even when several of the chat's searches find it. When several scans become due together,
+they wait in a FIFO queue; repeated triggers for the same search do not pile up. A chat's searches
+scan one after another.
 Set `MAX_CONCURRENT_SCANS` in `.env` to adjust the number of browser scans allowed
-at once. `/status` shows whether your search is queued, running, or waiting.
+at once, and `SCAN_GAP_SECONDS` for the pause between scans. `/status` shows whether each search is
+queued, running, or waiting.
 
 To update, pull the latest changes and run `docker compose up -d --build` again.
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full Raspberry Pi deployment steps.
@@ -110,17 +115,17 @@ https://www.yad2.co.il/vehicles/cars?manufacturer=334&model=13190&year=2023--1&p
 ```
 
 The bot uses the URL's filters as sent, starts a scan, and checks again every 10
-minutes. `/status` shows the active URL; `/stop` stops its alerts. A new URL
-replaces the previous search for that chat. If Yad2 does not list a year, price,
+minutes. `/status` lists the chat's searches; `/stop` stops one of them (or all). A new URL
+is added next to the chat's other searches. If Yad2 does not list a year, price,
 mileage, or hand for a car, the alert says "Not listed" for that field.
 
 ## Usage
 
 1. Tap **Menu** next to the message box to see the available commands, or tap **Commands** after `/start`
 2. `/start` - welcome message with search link and filter buttons (or access instructions for new users)
-3. `/search` - configure a new search (manufacturer, model, year range, scan interval)
-4. `/stop` - stop the active scan
-5. `/status` - show current scan configuration and how many cars have been found
+3. `/search` - add a search (manufacturer, model, year range, scan interval); your other searches keep running
+4. `/stop` - stop a search (pick which one when you have several, or stop all)
+5. `/status` - list your searches, how many cars each found and when each is checked next
 
 ## Ad archive and dashboard
 

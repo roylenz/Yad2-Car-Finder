@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+from urllib.parse import unquote_plus
 import json
 import tempfile
 import unittest
@@ -33,10 +34,11 @@ class DashboardTests(unittest.TestCase):
         listing = yad2_json.listing_from_json(item, detailed=True)
         tracker = AdTracker(self.state.ads)
         start = datetime.datetime(2026, 11, 1)
-        tracker.apply(1, ScanOutput([listing]), start)
+        search, _ = self.state.add_search(1, "https://www.yad2.co.il/vehicles/cars?manufacturer=19", 10)
+        tracker.apply(1, search.id, ScanOutput([listing]), start)
         cheaper = CarListing(**{**listing.__dict__, "price": 82000})
-        tracker.apply(1, ScanOutput([cheaper]), start + datetime.timedelta(days=2))
-        tracker.apply(1, ScanOutput([], removed=[listing.url]), start + datetime.timedelta(days=5))
+        tracker.apply(1, search.id, ScanOutput([cheaper]), start + datetime.timedelta(days=2))
+        tracker.apply(1, search.id, ScanOutput([], removed=[listing.url]), start + datetime.timedelta(days=5))
 
         buffer = BytesIO()
         Image.new("RGB", (640, 480), "blue").save(buffer, "JPEG")
@@ -69,21 +71,23 @@ class DashboardTests(unittest.TestCase):
         from storage.db import utcnow
         from storage.scans import ScanLog
 
-        self.state.set_search(1, "https://www.yad2.co.il/vehicles/cars?x=1", 10)
+        url = "https://www.yad2.co.il/vehicles/cars?carTag=6&price=1-100000"
+        search, _ = self.state.add_search(1, url, 10)
         log = ScanLog(self.state.engine)
-        done = log.queued(1, "https://www.yad2.co.il/vehicles/cars?x=1")
+        done = log.queued(1, url, search.id)
         log.started(done)
         log.finished(done, results=84, new_ads=3, price_drops=1, removed=2, details_fetched=12)
-        broken = log.queued(1, "https://www.yad2.co.il/vehicles/cars?x=1")
+        broken = log.queued(1, url, search.id)
         log.started(broken)
         log.failed(broken, "Yad2 asked for validation")
-        running = log.queued(1, "https://www.yad2.co.il/vehicles/cars?x=1")
+        running = log.queued(1, url, search.id)
         log.started(running)
         log.progress(running, "Ad pages 5/40 (84 results)")
-        log.set_next(1, utcnow() + datetime.timedelta(minutes=7))
+        log.set_next(search.id, utcnow() + datetime.timedelta(minutes=7))
 
         page = self.client.get("/scans").text
-        for expected in ("Ad pages 5/40", "Yad2 asked for validation", "in 7 min", ">84<", "Scanning"):
+        for expected in ("Ad pages 5/40", "Yad2 asked for validation", "in 7 min", ">84<", "Scanning",
+                         "Electric · up to ₪100,000", "Stop this search", "Add a search"):
             self.assertIn(expected, page)
         self.assertIn("Ad pages 5/40", self.client.get("/").text)
         self.assertIn("in 7 min", self.client.get("/").text)
@@ -92,6 +96,32 @@ class DashboardTests(unittest.TestCase):
         page = self.client.get("/scans?chat=1").text
         self.assertIn("Bot restarted before the scan finished", page)
         self.assertNotIn("Scanning", page)
+
+    def test_searches_are_added_and_stopped_on_the_scans_page(self):
+        url = "https://www.yad2.co.il/vehicles/cars?manufacturer=19&price=-1-120000"
+        response = self.client.post(
+            "/searches", data={"url": url + "&page=2", "chat": "1", "interval": "15"}, follow_redirects=False
+        )
+        self.assertEqual(response.status_code, 303)
+        self.assertIn("Added", unquote_plus(response.headers["location"]))
+        added = self.state.chat_searches(1)[-1]
+        self.assertEqual((added.url, added.interval_minutes), (url, 15))
+        self.assertEqual(self.state.searches_added_on_dashboard(), [added])
+        self.assertEqual(self.state.searches_added_on_dashboard(), [])  # announced once
+
+        again = self.client.post("/searches", data={"url": url, "chat": "1", "interval": "15"})
+        self.assertIn("already tracks this search", again.text)
+        bad = self.client.post("/searches", data={"url": "https://example.com/x", "chat": "1", "interval": "10"})
+        self.assertIn("HTTPS Yad2 car search URL", bad.text)
+        foreign = self.client.post(
+            "/searches", data={"url": url, "chat": "1", "interval": "10"},
+            headers={"origin": "https://evil.example"},
+        )
+        self.assertEqual(foreign.status_code, 403)
+
+        stopped = self.client.post(f"/searches/{added.id}/stop")
+        self.assertIn("Stopped", stopped.text)
+        self.assertNotIn(added, self.state.chat_searches(1))
 
     def test_background_page_shows_live_status_and_backlog(self):
         from storage.background_status import StatusBoard
@@ -129,7 +159,8 @@ class DashboardTests(unittest.TestCase):
             "https://www.yad2.co.il/vehicles/item/second1", "טויוטה קורולה", 70000, 90000,
             year=2020, manufacturer="טויוטה", model="קורולה", sub_model="Sun היברידי",
         )
-        AdTracker(self.state.ads).apply(1, ScanOutput([second]))
+        search = self.state.chat_searches(1)[0]
+        AdTracker(self.state.ads).apply(1, search.id, ScanOutput([second]))
         listing = self.client.get("/ads?status=all&sort=model&model=קורולה").text
         self.assertEqual(listing.count('class="group-row"'), 2)
         market = self.client.get("/market?manufacturer=טויוטה&model=קורולה").text

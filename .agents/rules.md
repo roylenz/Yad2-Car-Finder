@@ -39,7 +39,9 @@
 - Periodic scanning via `JobQueue.run_repeating()`, or one-time scan (interval=0)
 - State stored in `context.chat_data` (per-chat filter, scan status)
 - Ads are stored once in a global catalog (`ads`, history in `ad_snapshots`, `photos`); `chat_ads` holds per-chat alert state. First scan of a search sends all, later scans only new ads and price drops
-- `/stop` and new searches clear only `chat_ads`; the ad history is kept
+- A chat has several searches (`searches.id`, `storage.searches.SearchStore`); scan jobs are named `scan_<search id>`. `chat_ads` is what a chat was told (one alert per ad across its searches); `search_ads` is what each search's results held. Stopping a search keeps the ad history; a chat left without searches forgets `chat_ads`
+- The dashboard adds and stops searches by writing `searches`; the bot's `sync_searches` job (every 30s) schedules or drops them and announces dashboard-added ones in the chat
+- One scan at a time by default (`MAX_CONCURRENT_SCANS=1`), `SCAN_GAP_SECONDS` apart, and a chat's searches never scan in parallel
 - Schema changes: add an Alembic migration in `src/storage/migrations/versions/`; keep SQL portable between SQLite and Postgres (use `storage.db.upsert`)
 - Store times as naive UTC (`storage.db.utcnow()`)
 - Models/analysis go in `src/processing/processors/` as `Processor` subclasses; never call them from the scan path
@@ -56,7 +58,7 @@ src/
   main.py                    # entry point — starts Telegram bot
   bot/
     bot.py                   # Application setup, handler registration, background pipeline start
-    handlers.py              # /start, /search, /stop, /status + ConversationHandler
+    handlers.py              # /start, /search, /stop (pick a search), /status + ConversationHandler
     keyboards.py             # inline keyboard builders (manufacturers, models, years, intervals)
     scanner.py               # scan queue, alert formatting, Telegram notifications
     state.py                 # BotState: searches, access control, per-chat view of the catalog

@@ -1,8 +1,9 @@
+import os
 from typing import NamedTuple
 
 from car.catalog import MANUFACTURERS, MANUFACTURER_BY_ID, model_name, models_for
 from car.car_search_filter import CarSearchFilter
-from car.search_url import normalize_search_url, search_url_for_filter
+from car.search_url import describe_search, normalize_search_url, search_url_for_filter
 from common.logger import logger
 from common.range import Range
 from telegram import Update
@@ -15,10 +16,11 @@ from bot.keyboards import (
     build_manufacturer_keyboard,
     build_model_keyboard,
     build_start_keyboard,
+    build_stop_keyboard,
     build_year_max_keyboard,
     build_year_min_keyboard,
 )
-from bot.scanner import Scanner, schedule_scan
+from bot.scanner import Scanner, schedule_scan, unschedule_scan
 
 (
     SELECTING_MANUFACTURER,
@@ -29,7 +31,7 @@ from bot.scanner import Scanner, schedule_scan
     CONFIRMING,
 ) = range(6)
 
-JOB_NAME_PREFIX = "scan_"
+MAX_SEARCHES_PER_CHAT = int(os.getenv("MAX_SEARCHES_PER_CHAT", "5"))
 
 scanner = Scanner()
 
@@ -87,17 +89,18 @@ async def search_link_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def search_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Entry point for search configuration (from /search command or inline button)."""
     chat_id = update.effective_chat.id
-    was_active = scanner.state.get_search(chat_id) is not None
-    logger.debug("/search entry", **_user_context(update), previous_scan_active=was_active)
-
-    if was_active:
-        _remove_scan_jobs(context, chat_id)
-        scanner.state.stop_search(chat_id)
-        context.chat_data["scan_active"] = False
-        logger.debug("Previous scan stopped for new search", **_user_context(update))
-    else:
-        _remove_scan_jobs(context, chat_id)
-        context.chat_data["scan_active"] = False
+    logger.debug("/search entry", **_user_context(update))
+    if len(scanner.state.chat_searches(chat_id)) >= MAX_SEARCHES_PER_CHAT:
+        text = (
+            f"You already have {MAX_SEARCHES_PER_CHAT} searches, the most a chat can have. "
+            "Use /stop to remove one first."
+        )
+        if update.callback_query:
+            await update.callback_query.answer()
+            await update.callback_query.edit_message_text(text)
+        else:
+            await update.message.reply_text(text)
+        return ConversationHandler.END
 
     context.chat_data["selected_manufacturers"] = set()
     context.chat_data["selected_models"] = set()
@@ -310,17 +313,15 @@ async def confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
 
         search_url = search_url_for_filter(car_filter)
-        scanner.state.set_search(chat_id, search_url, interval)
-        schedule_scan(context.job_queue, scanner, chat_id, search_url, interval)
-
-        context.chat_data["active_filter"] = car_filter
-        context.chat_data["scan_active"] = True
+        search, _created = scanner.state.add_search(chat_id, search_url, interval)
+        schedule_scan(context.job_queue, scanner, search)
 
         if interval > 0:
+            count = len(scanner.state.chat_searches(chat_id))
             msg = (
                 f"✅ Scanning started! I'll check every {interval} minutes.\n"
-                f"Use /stop to stop scanning.\n"
-                f"Use /status to check current configuration."
+                f"{_count_text(count)}"
+                f"Use /status to see your searches or /stop to stop one."
             )
         else:
             msg = (
@@ -337,58 +338,86 @@ async def confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     chat_id = update.effective_chat.id
-    is_active = scanner.state.get_search(chat_id) is not None
-    logger.debug("/stop command received", **_user_context(update), was_active=is_active)
+    chat_searches = scanner.state.chat_searches(chat_id)
+    logger.debug("/stop command received", **_user_context(update), searches=len(chat_searches))
 
-    if not is_active:
+    if not chat_searches:
         await update.message.reply_text(
-            "ℹ️ No active scan to stop. Use /search to configure one.",
+            "ℹ️ No active search to stop. Use /search to configure one.",
             reply_markup=build_start_keyboard(),
         )
         return ConversationHandler.END
-
-    _remove_scan_jobs(context, chat_id)
-    context.chat_data["scan_active"] = False
-    scanner.state.stop_search(chat_id)
-    logger.debug("Scan stopped and listing state cleared", **_user_context(update))
-
+    if len(chat_searches) == 1:
+        stop_search(context, chat_searches[0].id)
+        await update.message.reply_text(
+            "⏹️ Scanning stopped. Use /search to configure a new search.",
+            reply_markup=build_start_keyboard(),
+        )
+        return ConversationHandler.END
     await update.message.reply_text(
-        "⏹️ Scanning stopped. Use /search to configure a new search.",
-        reply_markup=build_start_keyboard(),
+        "Which search should I stop?",
+        reply_markup=build_stop_keyboard(
+            [(search.id, describe_search(search.url)) for search in chat_searches]
+        ),
     )
     return ConversationHandler.END
 
 
+async def stop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    chat_id = update.effective_chat.id
+    choice = query.data.split(":", 1)[1]
+    chat_searches = scanner.state.chat_searches(chat_id)
+    await query.answer()
+    if choice == "all":
+        for search in chat_searches:
+            stop_search(context, search.id)
+        await query.edit_message_text("⏹️ All searches stopped. Use /search to start a new one.")
+        return
+    search = next((item for item in chat_searches if str(item.id) == choice), None)
+    if search is None:
+        await query.edit_message_text("That search was already stopped.")
+        return
+    stop_search(context, search.id)
+    left = len(chat_searches) - 1
+    await query.edit_message_text(
+        f"⏹️ Stopped: {describe_search(search.url)}\n{_count_text(left)}".rstrip()
+    )
+
+
+def stop_search(context: ContextTypes.DEFAULT_TYPE, search_id: int) -> None:
+    unschedule_scan(context.job_queue, search_id)
+    scanner.state.stop_search(search_id)
+
+
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
-    active = scanner.state.get_search(chat_id)
-    is_active = active is not None
-    logger.debug("/status command received", **_user_context(update), scan_active=is_active)
+    chat_searches = scanner.state.chat_searches(chat_id)
+    logger.debug("/status command received", **_user_context(update), searches=len(chat_searches))
 
-    if not is_active:
+    if not chat_searches:
         await update.message.reply_text(
-            "No active scan. Use /search to configure one.",
+            "No active search. Use /search to configure one.",
             reply_markup=build_start_keyboard(),
         )
         return
 
-    search_url, interval = active
-    seen_count = scanner.get_seen_count(chat_id)
-    logger.debug("Status check", **_user_context(update), seen_count=seen_count)
-
-    interval_text = f"Every {interval} minutes" if interval else "One-time scan"
-    await update.message.reply_text(
-        f"Current Scan Status:\n\n"
-        f"🟢 Active\n"
-        f"📊 {seen_count} unique cars found so far\n\n"
-        f"⏱️ {interval_text}\n"
-        f"🔄 {scanner.queue_status(chat_id)}\n"
-        f"🔗 {search_url}",
-    )
+    blocks = []
+    for number, search in enumerate(chat_searches, 1):
+        interval = search.interval_minutes
+        interval_text = f"every {interval} minutes" if interval else "one-time scan"
+        blocks.append(
+            f"{number}. {describe_search(search.url)}\n"
+            f"📊 {scanner.get_seen_count(search.id)} cars found · ⏱️ {interval_text}\n"
+            f"🔄 {scanner.queue_status(search.id)}\n"
+            f"🔗 {search.url}"
+        )
+    heading = "Your search:" if len(chat_searches) == 1 else f"Your {len(chat_searches)} searches:"
+    await update.message.reply_text(heading + "\n\n" + "\n\n".join(blocks))
 
 
 async def url_search_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Start alerts from a Yad2 search link sent as a Telegram message."""
+    """Add a search from a Yad2 search link sent as a Telegram message."""
     try:
         search_url = normalize_search_url(update.message.text)
     except ValueError as error:
@@ -396,18 +425,30 @@ async def url_search_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ConversationHandler.END
 
     chat_id = update.effective_chat.id
-    interval = 10
-    scanner.state.set_search(chat_id, search_url, interval)
-    schedule_scan(context.job_queue, scanner, chat_id, search_url, interval)
-    context.chat_data["scan_active"] = True
-    context.chat_data["search_url"] = search_url
-    logger.info("URL search started", chat_id=chat_id, search_url=search_url)
+    chat_searches = scanner.state.chat_searches(chat_id)
+    if any(search.url == search_url for search in chat_searches):
+        await update.message.reply_text("You're already tracking this search. Use /status to see it.")
+        return ConversationHandler.END
+    if len(chat_searches) >= MAX_SEARCHES_PER_CHAT:
+        await update.message.reply_text(
+            f"You already have {MAX_SEARCHES_PER_CHAT} searches, the most a chat can have. "
+            "Use /stop to remove one first."
+        )
+        return ConversationHandler.END
+    search, _created = scanner.state.add_search(chat_id, search_url, 10)
+    schedule_scan(context.job_queue, scanner, search)
+    logger.info("URL search started", chat_id=chat_id, search_id=search.id, search_url=search_url)
     await update.message.reply_text(
-        "✅ Tracking this Yad2 search every 10 minutes. The first scan starts now. "
-        "I'll alert you about new cars and price drops with price and mileage. "
-        "Use /status to check it or /stop to stop."
+        f"✅ Tracking {describe_search(search_url)} every 10 minutes. The first scan starts soon. "
+        "I'll alert you about new cars and price drops with price and mileage.\n"
+        f"{_count_text(len(chat_searches) + 1)}"
+        "Use /status to see your searches or /stop to stop one."
     )
     return ConversationHandler.END
+
+
+def _count_text(count: int) -> str:
+    return f"You now have {count} searches running.\n" if count > 1 else ""
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -420,12 +461,6 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
             )
         except Exception:
             pass
-
-
-def _remove_scan_jobs(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
-    for suffix in ("", "_once"):
-        for job in context.job_queue.get_jobs_by_name(f"{JOB_NAME_PREFIX}{chat_id}{suffix}"):
-            job.schedule_removal()
 
 
 def _build_car_filter(chat_data: dict) -> CarSearchFilter:

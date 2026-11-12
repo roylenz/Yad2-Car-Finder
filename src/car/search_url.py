@@ -65,3 +65,44 @@ def split_price(low: int, high: int, prices: list[int], parts: int = 2) -> list[
             start_at = cut + 1
     ranges.append((start_at, high))
     return ranges
+
+
+def describe_search(search_url: str) -> str:
+    """A short readable summary of a search's filters, e.g. "BYD Atto 3 · 2023+ · up to ₪100,000"."""
+    from car.catalog import MANUFACTURER_BY_ID, model_name
+
+    params = dict(parse_qsl(urlsplit(search_url).query))
+    ids = lambda key: [int(value) for value in params.get(key, "").split(",") if value.isdigit()]  # noqa: E731
+    makes = ids("manufacturer")
+    parts = []
+    if makes:
+        parts.append(", ".join(MANUFACTURER_BY_ID.get(make, {}).get("name", str(make)) for make in makes))
+    models = ids("model")
+    if models:
+        names = [model_name(model, set(makes)) for model in models]
+        parts.append(", ".join(names[:3]) + (f" +{len(names) - 3}" if len(names) > 3 else ""))
+    if not makes and params.get("carTag"):
+        parts.append({"6": "Electric"}.get(params["carTag"], f"Tag {params['carTag']}"))
+
+    def bounds(key: str) -> tuple[str, str]:
+        match = re.fullmatch(r"(-?\d+)-(-?\d+)", params.get(key, ""))
+        if not match:
+            return "", ""
+        low, high = (value if int(value) > 0 else "" for value in match.groups())
+        return low, high
+
+    year_low, year_high = bounds("year")
+    if year_low or year_high:
+        parts.append(f"{year_low}–{year_high}" if year_low and year_high else (f"{year_low}+" if year_low else f"until {year_high}"))
+    price_low, price_high = bounds("price")
+    if price_high:
+        parts.append(f"up to ₪{int(price_high):,}")
+    elif price_low:
+        parts.append(f"from ₪{int(price_low):,}")
+    _, km_high = bounds("km")
+    if km_high:
+        parts.append(f"up to {int(km_high):,} km")
+    hand_low, hand_high = bounds("hand")
+    if hand_high:
+        parts.append(f"hand {hand_high}" if hand_low == hand_high else f"hand ≤{hand_high}")
+    return " · ".join(parts) or "Yad2 search"
