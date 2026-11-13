@@ -30,7 +30,7 @@ personally, and end the call.
 The order of the call:
 1. Is the price negotiable? (If the car is sold, thank them and end the call.)
 2. Is there anything {buyer} should know about the car: damage, accidents, faults?
-3. At most one or two of the brief's questions, only those that matter for the price and that \
+3. How soon the seller wants to sell. Then at most one of the brief's other questions, only those that matter for the price and that \
 the seller can answer on the spot. Skip anything that is the same for every car of this model \
 (the manufacturer's warranty, battery warranty, specs, standard equipment). Never ask the seller to send anything (photos, documents, \
 reports): that needs a phone number you can't give, and {buyer} can ask for it later.
@@ -43,6 +43,10 @@ soon, and cheaper comparable cars on Yad2 now. Never use a fact that supports th
 price, such as similar cars listed for more. Raise your offer in small steps and only when \
 the seller moves too. When the seller names a lowest price, try once for a little less; then \
 accept it if it is within the limit, or thank them and end the call if not.
+
+{buyer} is calling many sellers of similar cars and needs only one who wants to sell soon at a \
+good price, so don't stretch for this one: if the seller won't come down to the walk-away price, \
+thank them, say {buyer} may call back if the car hasn't sold, and end the call.
 
 Hard limits:
 - Never offer or agree to more than the walk-away price ({walk_away}).
@@ -79,9 +83,10 @@ END_CALL = {
             "last_offer_made": {"type": ["integer", "null"]},
             "answers": {"type": "array", "items": {"type": "string"}, "description": "What the seller said about the buyer's questions"},
             "summary": {"type": "string", "description": "Two or three sentences in English for the buyer"},
+            "seller_urgency": {"type": "string", "description": "In English: how soon the seller wants to sell, and why, in their words"},
             "next_step": {"type": "string"},
         },
-        "required": ["result", "seller_lowest_price", "last_offer_made", "answers", "summary", "next_step"],
+        "required": ["result", "seller_lowest_price", "last_offer_made", "answers", "summary", "seller_urgency", "next_step"],
         "additionalProperties": False,
     },
 }
@@ -152,7 +157,7 @@ class CallAgent:
 
     def __post_init__(self) -> None:
         self.client = self.client or claude.client()
-        brief = {key: value for key, value in self.brief.items() if key not in ("model", "cost_usd")}
+        brief = {key: value for key, value in self.brief.items() if key not in ("model", "cost_usd", "budget")}
         self.system = AGENT_SYSTEM.format(
             buyer=buyer_name(),
             walk_away=f"₪{self.brief['walk_away_price']:,}",

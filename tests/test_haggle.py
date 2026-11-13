@@ -83,12 +83,12 @@ class HaggleTests(unittest.TestCase):
         facts = car_facts.gather(self.state.engine, "target01")
         answer = {**BRIEF, "opening_offer": 89000, "target_price": 90000, "walk_away_price": 92000}
         client = FakeClient(_response(_text(json.dumps(answer, ensure_ascii=False))))
-        brief = briefs.build(facts, max_price=88000, client=client)
+        brief = briefs.build(facts, budget=88000, client=client)
         self.assertEqual((brief["opening_offer"], brief["target_price"], brief["walk_away_price"]), (88000, 88000, 88000))
         request = client.requests[0]
         self.assertIn("₪88,000", request["messages"][0]["content"])
         self.assertEqual(request["output_config"]["format"]["schema"], briefs.SCHEMA)
-        self.assertIn("Fair price", briefs.as_text(facts, brief))
+        self.assertIn("your budget ₪88,000", briefs.as_text(facts, brief))
 
     @unittest.mock.patch.dict("os.environ", {"HAGGLE_BUYER_NAME": ""})
     def test_call_runs_until_the_caller_reports_the_outcome(self):
@@ -110,6 +110,7 @@ class HaggleTests(unittest.TestCase):
         system = client.requests[0]["system"][0]["text"]
         self.assertIn("₪88,000", system)  # walk-away limit
         self.assertIn("AI assistant", system)
+        self.assertIn("calling many sellers", system)
         self.assertIn("calling for הקונה", system)  # no HAGGLE_BUYER_NAME in the test
         self.assertNotIn("cost_usd", system)
         # The history is append-only: the second request starts with the first exchange unchanged.
@@ -124,6 +125,26 @@ class HaggleTests(unittest.TestCase):
         agent = CallAgent(facts, BRIEF, client=client)
         agent.start()
         self.assertIn("warning", agent.outcome)
+
+    def test_research_resumes_a_paused_search_and_feeds_the_brief(self):
+        from haggle import research
+
+        facts = car_facts.gather(self.state.engine, "target01")
+        paused = _response(_text("- New: list price ₪104,900 "))
+        paused.stop_reason = "pause_turn"
+        done = _response(_text("(wheel.co.il, 2026-07-19); 0 km clearance at ₪86,500."))
+        done.usage.server_tool_use = SimpleNamespace(web_search_requests=3)
+        client = FakeClient(paused, done)
+        result = research.run(facts, client=client)
+        self.assertIn("₪86,500", result["notes"])
+        self.assertEqual(client.requests[0]["tools"][0]["name"], "web_search")
+        self.assertEqual(client.requests[1]["messages"][1]["role"], "assistant")  # resumed, not restarted
+        self.assertIn("2024", client.requests[0]["messages"][0]["content"])  # model year
+        self.assertGreater(result["cost_usd"], 0.03)
+
+        brief_client = FakeClient(_response(_text(json.dumps(BRIEF, ensure_ascii=False))))
+        briefs.build(facts, 90000, client=brief_client, research=result["notes"])
+        self.assertIn("Online research:", brief_client.requests[0]["messages"][0]["content"])
 
     def test_simulated_seller_keeps_its_lowest_price_secret_in_the_prompt(self):
         facts = car_facts.gather(self.state.engine, "target01")

@@ -50,6 +50,7 @@ OUTCOME_FIELDS = {
     "last_offer_made": {"type": "integer", "description": "The caller's last offer in shekels; 0 if none"},
     "answers": {"type": "string", "description": "In English: what the seller said about the car (service, battery, warranty, accidents, why selling, viewing times)"},
     "summary": {"type": "string", "description": "Two or three sentences in English for the buyer"},
+    "seller_urgency": {"type": "string", "description": "In English: how soon the seller wants to sell, and why, in their words"},
     "next_step": {"type": "string", "description": "In English: what the buyer should do next"},
 }
 
@@ -166,7 +167,7 @@ def ensure_phone_number(agent_id: str, client: httpx.Client | None = None) -> st
 
 def dynamic_variables(facts: dict, brief: dict) -> dict:
     ad = facts["ad"]
-    clean = {key: value for key, value in brief.items() if key not in ("model", "cost_usd")}
+    clean = {key: value for key, value in brief.items() if key not in ("model", "cost_usd", "budget")}
     return {
         "car_title": ad["title"],
         "buyer": buyer_name(),

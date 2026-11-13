@@ -197,9 +197,14 @@ Pi. It reads a copy of the database and never writes to it; briefs and call tran
 `data/haggle/<ad ID>/`. It needs `ANTHROPIC_API_KEY` in the local `.env` (or `ant auth login`);
 `HAGGLE_MODEL` picks the Claude model (default Claude Opus 5.5).
 
-- `brief` - what the car is worth and why: time on the market, every price drop and repost,
-  comparable cars' prices, registry mismatches and photo findings, plus an opening offer, target
-  and walk-away price (never above `--max`) and what to say and ask in Hebrew
+- `brief` - built around your budget (`--budget`, the most you'd pay; required): first Claude
+  researches the car online (new and 0 km prices and clearance deals, published used prices, known
+  faults and recalls; notes with sources in `research.md`, about $0.40 a car, skip with
+  `--no-research`), then works out what the car is worth and why: time on the market, every price
+  drop and repost, comparable cars' prices, registry mismatches and photo findings, plus an opening
+  offer, target and walk-away price (never above the budget) and what to say and ask in Hebrew.
+  Since you can call many sellers, it doesn't stretch: the point is to find one who wants to sell
+  soon at your price, and every call asks how soon the seller wants to sell
 - `rehearse` - the phone call as text: Claude calls in Hebrew, says it is an AI calling for a
   buyer, negotiates within the walk-away price, never commits to buying, and reports the outcome.
   You type the seller's side, or `--auto-seller` lets Claude play a seller with a secret lowest price
@@ -211,8 +216,8 @@ ssh pi 'cd ~/Yad2-Car-Finder && sudo docker compose exec -T bot python -c "impor
 export BOT_DB_PATH=data/pi-copy.sqlite3
 RUN="uv run --no-project --python 3.12 --with-requirements requirements.txt"
 PYTHONPATH=src $RUN python -m haggle list
-PYTHONPATH=src $RUN python -m haggle brief <ad ID> --max 90000
-PYTHONPATH=src $RUN python -m haggle rehearse <ad ID> --max 90000 --auto-seller
+PYTHONPATH=src $RUN python -m haggle brief <ad ID> --budget 80000
+PYTHONPATH=src $RUN python -m haggle rehearse <ad ID> --budget 80000 --auto-seller
 ```
 
 `call` makes a real phone call: an ElevenLabs agent speaks Hebrew (voice "Hebrew Assistant",
@@ -232,7 +237,7 @@ transcript, the outcome ElevenLabs extracts and the recording are saved next to 
 `ELEVENLABS_API_KEY`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` and `TWILIO_PHONE_NUMBER`.
 
 ```bash
-PYTHONPATH=src $RUN python -m haggle call <ad ID> --max 90000 --to +9725...
+PYTHONPATH=src $RUN python -m haggle call <ad ID> --budget 80000 --to +9725...
 ```
 
 ## Tests

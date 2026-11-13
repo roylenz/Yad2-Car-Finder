@@ -1,13 +1,14 @@
 """Try the haggling agent from a PC.
 
     PYTHONPATH=src python -m haggle list
-    PYTHONPATH=src python -m haggle brief <token> [--max 95000]
-    PYTHONPATH=src python -m haggle rehearse <token> [--max 95000]            # you play the seller
-    PYTHONPATH=src python -m haggle rehearse <token> --auto-seller [--lowest 88000]
-    PYTHONPATH=src python -m haggle call <token> --to +9725... [--max 95000]     # real phone call
+    PYTHONPATH=src python -m haggle brief <token> --budget 80000 [--no-research]
+    PYTHONPATH=src python -m haggle rehearse <token> --budget 80000            # you play the seller
+    PYTHONPATH=src python -m haggle rehearse <token> --budget 80000 --auto-seller [--lowest 76000]
+    PYTHONPATH=src python -m haggle call <token> --budget 80000 --to +9725...  # real phone call
 
 Reads the database at BOT_DB_PATH (or DATA_DIR/bot.sqlite3) and never writes to it; briefs and
-call transcripts are saved under DATA_DIR/haggle/<token>/. Needs ANTHROPIC_API_KEY (or an
+call transcripts are saved under DATA_DIR/haggle/<token>/. Before the first brief Claude
+researches the car online (new and 0 km prices, known faults); notes go to research.md. Needs ANTHROPIC_API_KEY (or an
 `ant auth login` profile). HAGGLE_MODEL picks the Claude model.
 """
 
@@ -21,6 +22,7 @@ from sqlalchemy import select
 
 from haggle import brief as briefs
 from haggle import facts as car_facts
+from haggle import research as online
 from haggle.call import CallAgent, SimulatedSeller
 from storage.db import data_dir, default_database_url, get_engine
 from storage.schema import ads
@@ -33,8 +35,10 @@ def main(argv: list[str] | None = None) -> int:
     for name in ("brief", "rehearse", "call"):
         command = commands.add_parser(name)
         command.add_argument("token", help="Yad2 ad ID (the end of the ad's link)")
-        command.add_argument("--max", type=int, help="The most you would pay")
-        command.add_argument("--refresh", action="store_true", help="Write a new brief even if one is saved")
+        command.add_argument("--budget", "--max", dest="budget", type=int, required=True,
+                             help="The most you would pay; the brief is built around it")
+        command.add_argument("--refresh", action="store_true", help="Write a new brief (and research) even if one is saved")
+        command.add_argument("--no-research", action="store_true", help="Write the brief without searching the web")
     rehearse = commands.choices["rehearse"]
     rehearse.add_argument("--auto-seller", action="store_true", help="Claude plays the seller too")
     rehearse.add_argument("--lowest", type=int, help="Simulated seller's secret lowest price (default 5%% under asking)")
@@ -98,13 +102,27 @@ def _brief(facts: dict, args, folder) -> dict:
     path = folder / "brief.json"
     if path.exists() and not args.refresh:
         saved = json.loads(path.read_text())
-        if saved.get("max_price") == args.max:
+        if saved.get("budget") == args.budget:
             return saved
+    research = None if args.no_research else _research(facts, args, folder)
     print("Preparing the negotiation brief…", file=sys.stderr)
-    brief = briefs.build(facts, args.max)
+    brief = briefs.build(facts, args.budget, research=research["notes"] if research else None)
+    if research:
+        brief["cost_usd"] = round(brief["cost_usd"] + research["cost_usd"], 4)
     path.write_text(json.dumps(brief, ensure_ascii=False, indent=1))
     (folder / "facts.json").write_text(json.dumps(facts, ensure_ascii=False, indent=1, default=str))
     return brief
+
+
+def _research(facts: dict, args, folder) -> dict:
+    path = folder / "research.json"
+    if path.exists() and not args.refresh:
+        return json.loads(path.read_text())
+    print("Researching the car online…", file=sys.stderr)
+    research = {"date": facts["today"], **online.run(facts)}
+    path.write_text(json.dumps(research, ensure_ascii=False, indent=1))
+    (folder / "research.md").write_text(research["notes"] + "\n")
+    return research
 
 
 def _rehearse(facts: dict, brief: dict, args, folder) -> int:

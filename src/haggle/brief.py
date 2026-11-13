@@ -10,15 +10,24 @@ You get everything known about the car as JSON: the ad, how long it has been lis
 price change (reposts included), asking prices of comparable cars, the vehicle registry check \
 (ownership history, test dates, where the ad and registry disagree) and an inspection of the \
 ad's photos. Prices are in shekels and are asking prices, not sale prices. `today` is the date of the call;
-work out how far away any date is from it.
+work out how far away any date is from it. You may also get notes from online research, with \
+sources: what the model costs new or 0 km now, price guides and known faults. A new or 0 km car \
+for not much more than this asking price is strong leverage; so are known faults. Cite research \
+figures with their source and date; for Yad2 prices, trust the car data.
 
-Estimate a fair price, then suggest an opening offer, a target and a walk-away price. Base every \
-argument on the facts given, and cite the evidence (numbers, dates, photo numbers, registry \
+The buyer gives a budget: the most they would pay for this car. They will call many sellers of \
+similar cars and only need one who wants to sell soon at a good price, so there is no need to \
+stretch for this one. Estimate a fair price, then suggest an opening offer, a target and a \
+walk-away price, all at or below the budget: the walk-away price is the budget, or less if the car \
+isn't worth that much. Open well below the target, and aim for what a seller who wants to sell \
+soon would take. If the asking price is above the budget, the call's job is to find out whether \
+the seller would come down to it. Always include a question about how soon the seller wants to \
+sell. Base every argument on the facts given, and cite the evidence (numbers, dates, photo numbers, registry \
 fields). Never invent facts, other offers or competing cars that are not in the data. Strong \
 leverage is usually: long time on the market, repeated price drops or reposts, cheaper \
 comparable cars, ownership the ad hides (dealer, rental, company, more hands), damage or wear \
-in the photos, a test due soon. If something is unknown, say what to ask the seller instead: questions the seller can answer on \
-the phone, never requests to send photos or documents, and nothing that is the same for every \
+in the photos, a test due soon. If something is unknown, say what to ask the seller instead: questions that each ask one thing, that the \
+seller can answer on the phone, never requests to send photos or documents, and nothing that is the same for every \
 car of this model (the manufacturer's warranty, specs, standard equipment). Leverage is only what \
 argues for a lower price: never list cars priced above this one as leverage.
 
@@ -67,11 +76,15 @@ SCHEMA = {
 }
 
 
-def build(facts: dict, max_price: int | None = None, client=None) -> dict:
-    """Ask Claude for the brief. `max_price` is the buyer's ceiling; offers never go above it."""
+def build(facts: dict, budget: int, client=None, research: str | None = None) -> dict:
+    """Ask Claude for the brief. `budget` is the most the buyer would pay; offers never go above it.
+
+    `research` is the online research notes (haggle.research), when there are any.
+    """
     request = "Car facts:\n" + json.dumps(facts, ensure_ascii=False, indent=1, default=str)
-    if max_price:
-        request += f"\n\nThe buyer will not pay more than ₪{max_price:,}. Keep every price at or below that."
+    if research:
+        request += "\n\nOnline research:\n" + research
+    request += f"\n\nThe buyer's budget: ₪{budget:,}. Keep every price at or below that."
     response = (client or claude.client()).beta.messages.create(
         model=claude.model(),
         max_tokens=16000,
@@ -82,11 +95,10 @@ def build(facts: dict, max_price: int | None = None, client=None) -> dict:
     )
     claude.check(response)
     brief = json.loads(next(block.text for block in response.content if block.type == "text"))
-    if max_price:
-        for key in ("opening_offer", "target_price", "walk_away_price"):
-            brief[key] = min(brief[key], max_price)
+    for key in ("opening_offer", "target_price", "walk_away_price"):
+        brief[key] = min(brief[key], budget)
     brief["opening_offer"] = min(brief["opening_offer"], brief["target_price"], brief["walk_away_price"])
-    brief["max_price"] = max_price
+    brief["budget"] = budget
     brief["model"] = response.model
     brief["cost_usd"] = round(claude.cost_usd(response), 4)
     return brief
@@ -100,7 +112,7 @@ def as_text(facts: dict, brief: dict) -> str:
         "",
         brief["summary"],
         "",
-        f"Fair price ≈ ₪{brief['fair_price']:,}",
+        f"Fair price ≈ ₪{brief['fair_price']:,} · your budget ₪{brief['budget']:,}",
         f"Open at ₪{brief['opening_offer']:,} · aim for ₪{brief['target_price']:,} · walk away above ₪{brief['walk_away_price']:,}",
         "",
         "Leverage:",
