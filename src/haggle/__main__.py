@@ -4,7 +4,8 @@
     PYTHONPATH=src python -m haggle brief <token> --budget 80000 [--no-research]
     PYTHONPATH=src python -m haggle rehearse <token> --budget 80000            # you play the seller
     PYTHONPATH=src python -m haggle rehearse <token> --budget 80000 --auto-seller [--lowest 76000]
-    PYTHONPATH=src python -m haggle call <token> --budget 80000 --to +9725...  # real phone call
+    PYTHONPATH=src python -m haggle call <token> --budget 80000 [--to +9725...]  # real phone call
+    PYTHONPATH=src python -m haggle phone <token>                               # the seller's number
 
 Reads the database at BOT_DB_PATH (or DATA_DIR/bot.sqlite3) and never writes to it; briefs and
 call transcripts are saved under DATA_DIR/haggle/<token>/. Before the first brief Claude
@@ -33,6 +34,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="haggle", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("list", help="Cars on Yad2 now, cheapest first")
+    phone = commands.add_parser("phone", help="The seller's number, read from the ad like a buyer does")
+    phone.add_argument("token")
+    phone.add_argument("--refresh", action="store_true", help="Look it up again")
     for name in ("brief", "rehearse", "call"):
         command = commands.add_parser(name)
         command.add_argument("token", help="Yad2 ad ID (the end of the ad's link)")
@@ -46,13 +50,16 @@ def main(argv: list[str] | None = None) -> int:
     rehearse.add_argument("--persona", help="Simulated seller's personality")
     rehearse.add_argument("--turns", type=int, default=24, help="Stop after this many caller turns")
     call = commands.choices["call"]
-    call.add_argument("--to", required=True, help="Number to call, e.g. +97254...")
+    call.add_argument("--to", help="Number to call, e.g. +97254...; default: the number on the ad")
     args = parser.parse_args(argv)
     load_dotenv()
 
     engine = get_engine(default_database_url())
     if args.command == "list":
         return _list(engine)
+    if args.command == "phone":
+        print(_seller_phone(args.token, args.refresh) or "")
+        return 0
     facts = car_facts.gather(engine, args.token)
     if facts is None:
         print(f"No ad {args.token} in the database", file=sys.stderr)
@@ -71,9 +78,12 @@ def main(argv: list[str] | None = None) -> int:
 def _call(facts: dict, brief: dict, args, folder) -> int:
     from haggle import voice
 
-    placed = voice.place_call(facts, brief, args.to)
+    to = args.to or _seller_phone(args.token)
+    if not to:
+        return 1
+    placed = voice.place_call(facts, brief, to)
     conversation_id = placed.get("conversation_id")
-    print(f"Calling {args.to} ({placed.get('message')}); conversation {conversation_id}")
+    print(f"Calling {to} ({placed.get('message')}); conversation {conversation_id}")
     if not conversation_id:
         return 1
     conversation = voice.wait_for_result(conversation_id)
@@ -85,6 +95,16 @@ def _call(facts: dict, brief: dict, args, folder) -> int:
     print("\nOutcome:", json.dumps(voice.outcome(conversation), ensure_ascii=False, indent=1))
     print(f"Saved {path}")
     return 0
+
+
+def _seller_phone(token: str, refresh: bool = False) -> str | None:
+    from haggle import phone
+
+    try:
+        return phone.seller_phone(token, refresh)
+    except phone.PhoneError as error:
+        print(f"Couldn't get the seller's number: {error}", file=sys.stderr)
+        return None
 
 
 def _list(engine) -> int:

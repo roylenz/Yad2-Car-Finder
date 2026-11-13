@@ -166,6 +166,17 @@ class HaggleTests(unittest.TestCase):
         self.assertIn("₪90,000", client.requests[0]["system"])
 
 
+class PhoneTests(unittest.TestCase):
+    def test_the_new_number_on_the_page_in_international_form(self):
+        from haggle import phone
+
+        before = "שירות לקוחות 03-1234567\nהצגת מספר טלפון"
+        after = "שירות לקוחות 03-1234567\nלאה\n055-4393473"
+        self.assertEqual(phone.find_number(after, before), "+972554393473")
+        self.assertIsNone(phone.find_number(before, before))
+        self.assertEqual(phone.international("050-1234567"), "+972501234567")
+
+
 class VoiceTests(unittest.TestCase):
     def test_agent_config_keeps_the_rehearsal_rules_and_speaks_hebrew(self):
         from haggle import voice

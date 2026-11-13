@@ -240,7 +240,14 @@ the agent and imports the Twilio number into ElevenLabs (IDs in `data/haggle/voi
 transcript, the outcome ElevenLabs extracts and the recording are saved next to the brief. Needs
 `ELEVENLABS_API_KEY`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` and `TWILIO_PHONE_NUMBER`.
 
+Without `--to`, `call` gets the seller's number from the ad the way a buyer does: `phone` opens
+the ad in its own Chrome (profile in `data/haggle/chrome-profile/`, laid out at desktop size so a
+tiling window manager doesn't get the mobile page), presses "הצגת מספר טלפון" and reads the
+number shown, a Yad2 forwarding number. It's saved in `data/haggle/<ad ID>/seller.json`.
+
 ```bash
+PYTHONPATH=src $RUN python -m haggle phone <ad ID>
+PYTHONPATH=src $RUN python -m haggle call <ad ID> --budget 80000            # calls the number on the ad
 PYTHONPATH=src $RUN python -m haggle call <ad ID> --budget 80000 --to +9725...
 ```
 
