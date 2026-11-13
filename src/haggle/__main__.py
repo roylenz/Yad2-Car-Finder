@@ -58,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "list":
         return _list(engine)
     if args.command == "phone":
-        print(_seller_phone(args.token, args.refresh) or "")
+        print(_seller_phone(args.token, engine, args.refresh) or "")
         return 0
     facts = car_facts.gather(engine, args.token)
     if facts is None:
@@ -78,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
 def _call(facts: dict, brief: dict, args, folder) -> int:
     from haggle import voice
 
-    to = args.to or _seller_phone(args.token)
+    to = args.to or _seller_phone(args.token, get_engine(default_database_url()))
     if not to:
         return 1
     placed = voice.place_call(facts, brief, to)
@@ -97,11 +97,12 @@ def _call(facts: dict, brief: dict, args, folder) -> int:
     return 0
 
 
-def _seller_phone(token: str, refresh: bool = False) -> str | None:
+def _seller_phone(token: str, engine, refresh: bool = False) -> str | None:
+    """The number the bot saved for the ad, else read from the ad now."""
     from haggle import phone
 
     try:
-        return phone.seller_phone(token, refresh)
+        return phone.seller_phone_for(token, engine, refresh)
     except phone.PhoneError as error:
         print(f"Couldn't get the seller's number: {error}", file=sys.stderr)
         return None

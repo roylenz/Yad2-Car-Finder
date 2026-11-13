@@ -64,6 +64,7 @@ src/
   car/
     car_finder.py            # browser automation (nodriver): feed pages, item pages, removal checks
     yad2_json.py             # parse Yad2's __NEXT_DATA__ (feed + item) into CarListing
+    seller_phone.py          # seller's number: ad in a fresh desktop-size tab (button answers only on a tab's first ad), real click on "הצגת מספר טלפון", read the new number
     listing.py               # CarListing, ScanPlan, ScanOutput
     car_search_filter.py     # search filter params & enums
   storage/
@@ -77,8 +78,9 @@ src/
   tracking/
     tracker.py               # AdTracker: scan plan, apply scan → new ads / price drops; detect_changes
     photo_archiver.py        # async httpx download of original photos
-    background.py            # BackgroundPipeline: photos, processors, then sale follow-up; woken after each scan
+    background.py            # BackgroundPipeline: photos, processors, sale follow-up, then seller numbers; woken after each scan
     sale_watch.py            # removed ads with a plate: registry ownership checked ~12h for a week → sold / not_seen
+    phone_collector.py       # ads without a seller number: opened between scans (15/round, 3 tries, dealer ads without the button skipped), saved to ads.seller_phone; scans read it for new ads
   processing/
     base.py                  # Processor interface (target "photo" or "ad")
     registry.py              # available processors, PROCESSORS env var
@@ -100,7 +102,7 @@ src/
     facts.py                 # read-only facts for one car: price history, market, registry, condition
     brief.py                 # Claude negotiation brief built around the buyer's budget (offers never above it)
     call.py                  # CallAgent (text phone call, end_call tool) and SimulatedSeller
-    phone.py                 # seller's number from a tracked ad: opens it in Chrome (own profile, desktop layout), presses the show-number button
+    phone.py                 # seller's number: the bot's saved one (ads.seller_phone), else read from the ad in Chrome
     research.py              # online research per model+year (saved, reused 30 days): new/0 km prices, used prices, known faults
     voice.py                 # real calls: ElevenLabs agent (Hebrew, Claude Sonnet, short turns, one question each) + imported Twilio number; brief as dynamic variables
     __main__.py              # CLI: list / brief / rehearse / call; output in DATA_DIR/haggle/<token>/

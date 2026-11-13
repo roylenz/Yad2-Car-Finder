@@ -1,5 +1,5 @@
-"""Background work after scans: download new photos, run processors on them, then follow up
-removed ads for a sale."""
+"""Background work after scans: download new photos, run processors on them, follow up removed
+ads for a sale, then read seller numbers for ads that have none."""
 
 import asyncio
 import datetime
@@ -12,6 +12,7 @@ from storage.ads import AdRepository
 from storage.background_status import StatusBoard
 from storage.db import utcnow
 from storage.photos import LocalPhotoStore, PhotoStore
+from tracking.phone_collector import PhoneCollector
 from tracking.photo_archiver import PhotoArchiver
 from tracking.sale_watch import SaleWatch
 
@@ -24,6 +25,7 @@ class BackgroundPipeline:
         self.archiver = PhotoArchiver(ads, store)
         self.runner = ProcessingRunner(ads.engine, store, enabled_processors())
         self.sales = SaleWatch(ads.engine)
+        self.phones = PhoneCollector(ads)
         self.idle_seconds = idle_seconds
         self.ads = ads
         self.status = StatusBoard(ads.engine)
@@ -61,6 +63,9 @@ class BackgroundPipeline:
             pass
         while not self.busy() and await self.sales.run(busy=self.busy, progress=self._sale_progress):
             pass
+        # One batch per round: each opens Yad2 pages, so they are spread out between scans.
+        if not self.busy():
+            await self.phones.run(busy=self.busy, progress=self._phone_progress)
         if self.busy():
             self._report("paused", "Waiting for the running scan to finish")
 
@@ -69,6 +74,9 @@ class BackgroundPipeline:
 
     def _sale_progress(self, done: int, total: int) -> None:
         self._report("processing", "Sale follow-up (registry owners)", done, total)
+
+    def _phone_progress(self, done: int, total: int) -> None:
+        self._report("processing", "Seller numbers (opening ads)", done, total)
 
     def _report(self, state: str, detail: str | None = None, done: int | None = None,
                 total: int | None = None, next_run_at: datetime.datetime | None = None) -> None:

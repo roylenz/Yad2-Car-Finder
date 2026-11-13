@@ -12,7 +12,7 @@ from urllib.parse import urljoin, urlsplit
 
 import nodriver as uc
 from nodriver.core.connection import ProtocolException
-from car import yad2_json
+from car import seller_phone, yad2_json
 from car.listing import CarListing, ScanOutput, ScanPlan
 from car.search_url import BASE_URL, price_range, split_price, with_price
 from common.exceptions import CustomException, ErrorCode
@@ -339,8 +339,12 @@ class Yad2CarFinder:
         return None
 
     @staticmethod
-    async def _fetch_details(tab: uc.Tab, listing: CarListing) -> CarListing | None:
-        """Read the full ad from its page. Return None when Yad2 no longer has the ad."""
+    async def _fetch_details(
+        tab: uc.Tab, listing: CarListing, want_phone: bool = False
+    ) -> CarListing | None:
+        """Read the full ad from its page. Return None when Yad2 no longer has the ad.
+
+        With `want_phone`, also press "show number" and keep the seller's number."""
         try:
             await Yad2CarFinder._pause(Yad2CarFinder._ITEM_PAUSE_IN_SECONDS)
             await tab.get(listing.url)
@@ -354,12 +358,38 @@ class Yad2CarFinder:
                     item = yad2_json.item_data(next_data)
                     if item is None:
                         return None
-                    return Yad2CarFinder._merge(listing, yad2_json.listing_from_json(item, True))
+                    details = Yad2CarFinder._merge(listing, yad2_json.listing_from_json(item, True))
+                    if want_phone:
+                        details = replace(
+                            details, seller_phone=await Yad2CarFinder._phone(tab, listing.url)
+                        )
+                    return details
                 await tab.sleep(0.5)
             return await Yad2CarFinder._fetch_details_from_dom(tab, listing)
         except Exception as error:
             logger.warning("Could not read listing details", url=listing.url, error=str(error))
             return listing
+
+    @staticmethod
+    async def _phone(tab: uc.Tab, url: str) -> str | None:
+        """The seller's number, read in a tab of its own (the scan's tab keeps its layout, and the
+        button answers only on a tab's first ad page). A failure never fails the scan."""
+        phone_tab = None
+        try:
+            number, phone_tab = await seller_phone.reveal_in_new_tab(
+                tab.browser, url, button_wait=6, reveal_wait=9
+            )
+            return number
+        except Exception as error:
+            logger.warning("Could not read the seller's number", url=url, error=str(error))
+            return None
+        finally:
+            if phone_tab is not None:
+                try:
+                    await phone_tab.close()
+                except Exception:
+                    pass
+            await tab.activate()
 
     @staticmethod
     def _merge(old: CarListing, new: CarListing) -> CarListing:
@@ -547,7 +577,10 @@ class Yad2CarFinder:
             to_fetch = Yad2CarFinder._needs_details(list(listings.values()), plan)
             for index, listing in enumerate(to_fetch, 1):
                 report(f"Ad pages {index}/{len(to_fetch)} ({len(listings)} results)")
-                details = await Yad2CarFinder._fetch_details(tab, listing)
+                # New ads only: older ones are left to the background lookup between scans.
+                details = await Yad2CarFinder._fetch_details(
+                    tab, listing, want_phone=listing.url not in plan.known
+                )
                 if details is not None:
                     listings[listing.url] = details
 

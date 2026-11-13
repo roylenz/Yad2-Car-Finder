@@ -132,6 +132,10 @@ ads = Table(
     Column("sale_status", String(16)),
     Column("sold_month", String(7)),  # month of the ownership change that confirms the sale
     Column("sold_to", Text),  # new owner type
+    # Yad2's forwarding number for the seller (car/seller_phone.py), read from the ad page.
+    Column("seller_phone", String(16)),
+    Column("seller_phone_checked_at", DateTime),
+    Column("seller_phone_attempts", Integer, nullable=False, default=0, server_default="0"),
     Index("ix_ads_plate", "plate"),
     Index("ix_ads_car_id", "car_id"),
 )

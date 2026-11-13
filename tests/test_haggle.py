@@ -168,7 +168,7 @@ class HaggleTests(unittest.TestCase):
 
 class PhoneTests(unittest.TestCase):
     def test_the_new_number_on_the_page_in_international_form(self):
-        from haggle import phone
+        from car import seller_phone as phone
 
         before = "שירות לקוחות 03-1234567\nהצגת מספר טלפון"
         after = "שירות לקוחות 03-1234567\nלאה\n055-4393473"

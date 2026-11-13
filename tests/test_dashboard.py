@@ -191,6 +191,18 @@ class DashboardTests(unittest.TestCase):
         asyncio.run(pipeline.run_once())
         self.assertIn("Waiting for the running scan to finish", self.client.get("/background").text)
 
+    def test_ad_page_shows_the_sellers_number(self):
+        from sqlalchemy import update
+
+        from storage.schema import ads
+
+        self.assertNotIn("tel:", self.client.get("/ads/6rg1e7dp").text)
+        with self.state.engine.begin() as db:
+            db.execute(update(ads).where(ads.c.token == "6rg1e7dp").values(seller_phone="+972554393473"))
+        page = self.client.get("/ads/6rg1e7dp").text
+        self.assertIn('href="tel:+972554393473"', page)
+        self.assertIn("055-4393473", page)
+
     def test_ad_page_shows_test_and_registration_details(self):
         text = self.client.get("/ads/6rg1e7dp").text
         for expected in (

@@ -136,6 +136,8 @@ class AdRepository:
                 first_seen_at=now,
                 last_seen_at=now,
                 details_fetched_at=now if listing.detailed else None,
+                seller_phone=listing.seller_phone,
+                seller_phone_checked_at=now if listing.seller_phone else None,
             )
         )
         db.execute(
@@ -190,6 +192,8 @@ class AdRepository:
         if old.removed_at is not None:
             # Back on Yad2: whatever the sale follow-up concluded no longer holds.
             values.update(sale_status=None, sold_month=None, sold_to=None)
+        if listing.seller_phone:
+            values.update(seller_phone=listing.seller_phone, seller_phone_checked_at=now)
         if listing.detailed:
             values.update(raw=listing.raw, details_fetched_at=now)
         elif old.raw is None:
@@ -315,6 +319,38 @@ class AdRepository:
             db.execute(delete(chat_ads).where(chat_ads.c.chat_id == chat_id))
 
     # -- photos -------------------------------------------------------------------------------
+
+    def ads_without_phone(self, limit: int = 20, max_attempts: int = 3) -> list[tuple[str, str]]:
+        """(token, url) of ads still on Yad2 with no seller number yet, newest first."""
+        with self.engine.connect() as db:
+            rows = db.execute(
+                select(ads.c.token, ads.c.url)
+                .where(ads.c.removed_at.is_(None), ads.c.seller_phone.is_(None),
+                       ads.c.seller_phone_attempts < max_attempts)
+                .order_by(ads.c.first_seen_at.desc())
+                .limit(limit)
+            ).all()
+        return [(row.token, row.url) for row in rows]
+
+    def count_without_phone(self, max_attempts: int = 3) -> int:
+        with self.engine.connect() as db:
+            return db.execute(
+                select(func.count()).select_from(ads)
+                .where(ads.c.removed_at.is_(None), ads.c.seller_phone.is_(None),
+                       ads.c.seller_phone_attempts < max_attempts)
+            ).scalar_one()
+
+    def save_phone(self, token: str, phone: str | None, now: datetime.datetime | None = None,
+                   attempts: int = 1) -> None:
+        """Record a lookup: the number, or `attempts` more failed attempts when it is None."""
+        now = now or utcnow()
+        values = {"seller_phone_checked_at": now}
+        if phone:
+            values["seller_phone"] = phone
+        else:
+            values["seller_phone_attempts"] = ads.c.seller_phone_attempts + attempts
+        with self.engine.begin() as db:
+            db.execute(update(ads).where(ads.c.token == token).values(**values))
 
     def pending_photos(self, limit: int = 50, max_attempts: int = 5) -> list[tuple[int, str]]:
         with self.engine.connect() as db:

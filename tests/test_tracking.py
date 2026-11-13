@@ -443,3 +443,67 @@ class ScanFailureTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SellerPhoneTests(TempStateTestCase):
+    def setUp(self):
+        super().setUp()
+        self.search, _ = self.state.add_search(1, SEARCH, 10)
+        self.tracker = AdTracker(self.state.ads)
+
+    def ad(self, token, phone=None):
+        return CarListing(f"https://www.yad2.co.il/vehicles/item/{token}", "Car", 90000, seller_phone=phone)
+
+    def test_number_from_the_ad_page_is_saved_and_kept(self):
+        self.tracker.apply(1, self.search.id, ScanOutput([self.ad("phone001", "+972554393473"), self.ad("phone002")]))
+        self.tracker.apply(1, self.search.id, ScanOutput([self.ad("phone001"), self.ad("phone002")]))
+        with self.state.engine.connect() as db:
+            saved = dict(db.execute(select(ads.c.token, ads.c.seller_phone)).all())
+        self.assertEqual(saved, {"phone001": "+972554393473", "phone002": None})
+        # No phone change is logged as an ad change.
+        self.assertEqual(self.count(ad_snapshots, ad_snapshots.c.changes.is_not(None)), 0)
+
+    def test_background_collector_fills_missing_numbers_and_gives_up_after_three_tries(self):
+        from unittest import mock
+
+        from tracking import phone_collector
+
+        self.tracker.apply(1, self.search.id, ScanOutput([self.ad("phone001"), self.ad("phone002")]))
+        numbers = {"phone001": "+972501234567", "phone002": None}
+
+        class Tab:
+            async def close(self):
+                pass
+
+        class Browser:
+            async def get(self, _url):
+                return Tab()
+
+            def stop(self):
+                pass
+
+        async def reveal_in_new_tab(_browser, url, **_kwargs):
+            return numbers[url.rsplit("/", 1)[-1]], Tab()
+
+        async def page_state(_tab):
+            return "yad2", {}
+
+        async def has_button(_tab):
+            return True
+
+        async def start(_args):
+            return Browser()
+
+        collector = phone_collector.PhoneCollector(self.state.ads)
+        with mock.patch.object(phone_collector.Yad2CarFinder, "_start_browser", start), \
+                mock.patch.object(phone_collector.Yad2CarFinder, "_page_state", page_state), \
+                mock.patch.object(phone_collector.seller_phone, "reveal_in_new_tab", reveal_in_new_tab), \
+                mock.patch.object(phone_collector.seller_phone, "has_button", has_button), \
+                mock.patch.object(phone_collector, "PAUSE_SECONDS", (0, 0)):
+            self.assertEqual(asyncio.run(collector.run()), 1)
+            self.assertEqual(self.state.ads.ads_without_phone(), [("phone002", "https://www.yad2.co.il/vehicles/item/phone002")])
+            asyncio.run(collector.run())
+            asyncio.run(collector.run())
+            self.assertEqual(self.state.ads.ads_without_phone(), [])  # three failed tries
+            self.assertEqual(asyncio.run(collector.run()), 0)
+            self.assertEqual(asyncio.run(collector.run(busy=lambda: True)), 0)

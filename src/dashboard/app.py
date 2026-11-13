@@ -156,6 +156,14 @@ SEARCH_INTERVALS = (5, 10, 15, 30, 60)
 MAX_SEARCHES_PER_CHAT = int(os.getenv("MAX_SEARCHES_PER_CHAT", "5"))
 
 
+def _phone(number: str | None) -> str:
+    """"+972554393473" -> "055-4393473"."""
+    if not number or not number.startswith("+972"):
+        return number or ""
+    local = "0" + number[4:]
+    return f"{local[:-7]}-{local[-7:]}"
+
+
 def create_app(engine: Engine | None = None, store=None, authenticator=None) -> FastAPI:
     engine = engine or get_engine(default_database_url())
     store = store or LocalPhotoStore()
@@ -182,7 +190,7 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
     templates = Jinja2Templates(directory=_TEMPLATES)
     templates.env.filters.update(
         shekels=_shekels, number=_number, when=_when, change_summary=_change_summary,
-        param=_param, local=_local, until=_until, plate=plates.format_plate,
+        param=_param, local=_local, until=_until, plate=plates.format_plate, phone=_phone,
     )
     templates.env.globals["duration"] = _duration
     templates.env.globals["days_listed"] = queries.days_listed

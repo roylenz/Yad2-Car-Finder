@@ -138,6 +138,13 @@ written only when something changes. After each scan, new photos are downloaded 
 enabled processors run in the background. Background work pauses while a scan runs, so the
 browser has the Pi's CPU (Yad2's bot check fails on a slow browser).
 
+Seller numbers: when a scan reads a new ad it also opens the ad in a second tab, presses
+"הצגת מספר טלפון" and saves the number shown (Yad2's forwarding number) with the ad; the
+dashboard's ad page shows it. Ads that have no number yet are opened in the background between
+scans, 15 per round with a pause between ads, each in a fresh tab (the button only answers on a
+tab's first ad page), until each has one: three tries per ad, none more for dealer and leasing
+ads that have a contact form instead, and a bot check ends the round.
+
 Every scan is logged with its status (queued, running, ok, failed, cancelled, or interrupted
 by a restart), live progress, duration, result counts and error. The dashboard's Scans page
 shows this history and when each search scans next; a scan that is still running when the
@@ -240,10 +247,10 @@ the agent and imports the Twilio number into ElevenLabs (IDs in `data/haggle/voi
 transcript, the outcome ElevenLabs extracts and the recording are saved next to the brief. Needs
 `ELEVENLABS_API_KEY`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` and `TWILIO_PHONE_NUMBER`.
 
-Without `--to`, `call` gets the seller's number from the ad the way a buyer does: `phone` opens
-the ad in its own Chrome (profile in `data/haggle/chrome-profile/`, laid out at desktop size so a
-tiling window manager doesn't get the mobile page), presses "הצגת מספר טלפון" and reads the
-number shown, a Yad2 forwarding number. It's saved in `data/haggle/<ad ID>/seller.json`.
+Without `--to`, `call` uses the seller's number the bot saved for the ad (see "Seller numbers"
+below); for a database copy without it, `phone` opens the ad in its own Chrome (profile in
+`data/haggle/chrome-profile/`) and reads it the same way, saving it in
+`data/haggle/<ad ID>/seller.json`.
 
 ```bash
 PYTHONPATH=src $RUN python -m haggle phone <ad ID>

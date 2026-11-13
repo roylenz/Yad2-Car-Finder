@@ -18,6 +18,7 @@ class CarListing:
     attributes: dict = field(default_factory=dict, compare=False)
     raw: dict | None = field(default=None, compare=False, repr=False)
     detailed: bool = False  # True when read from the ad's own page
+    seller_phone: str | None = field(default=None, compare=False)  # read from the ad page
 
     @property
     def token(self) -> str:
