@@ -2,8 +2,8 @@
 
 Scans read the number when they open an ad page (car_finder._fetch_details); older ads, and any
 the scan missed, are opened here one by one between scans, with a pause between ads, and their
-number read like a buyer does it (car/seller_phone.py). An ad gets MAX_ATTEMPTS tries; one with no "show number"
-button (a dealer or leasing ad with a contact form instead) is not tried again.
+number read like a buyer does it (car/seller_phone.py): "הצגת מספר טלפון" on private ads,
+"יצירת קשר" on dealer ads. An ad gets MAX_ATTEMPTS tries; one with neither button is not tried again.
 A bot check ends the round: the next one starts after the pipeline's idle wait.
 """
 
