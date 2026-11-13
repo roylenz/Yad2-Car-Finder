@@ -139,11 +139,13 @@ enabled processors run in the background. Background work pauses while a scan ru
 browser has the Pi's CPU (Yad2's bot check fails on a slow browser).
 
 Seller numbers: when a scan reads a new ad it also opens the ad in a second tab, presses
-"הצגת מספר טלפון" and saves the seller's name and the number shown (Yad2's forwarding number)
+"הצגת מספר טלפון" (or a dealer's "יצירת קשר") and saves the seller's name and the number shown (Yad2's forwarding number)
 with the ad; the dashboard's ad page shows them. Ads missing the number or name are opened in the background between
 scans, 15 per round with a pause between ads, each in a fresh tab (the button only answers on a
-tab's first ad page), until each has one: three tries per ad, none more for dealer and leasing
-ads that have a contact form instead, and a bot check ends the round.
+tab's first ad page), until each has one: three tries per ad (one for an ad with neither button), and a bot check ends the round. Dealer ads
+have "יצירת קשר" instead: its box lists the dealer's people above a lead form, which is left
+untouched; the first person's name and number are saved, with the dealership's name, e.g.
+"דני (Drive On Motors)".
 
 Every scan is logged with its status (queued, running, ok, failed, cancelled, or interrupted
 by a restart), live progress, duration, result counts and error. The dashboard's Scans page

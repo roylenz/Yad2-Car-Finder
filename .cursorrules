@@ -64,7 +64,7 @@ src/
   car/
     car_finder.py            # browser automation (nodriver): feed pages, item pages, removal checks
     yad2_json.py             # parse Yad2's __NEXT_DATA__ (feed + item) into CarListing
-    seller_phone.py          # seller's number and name: ad in a fresh desktop-size tab (button answers only on a tab's first ad), real click on "הצגת מספר טלפון", read the new number and the contact box's name
+    seller_phone.py          # seller's number and name: ad in a fresh desktop-size tab (button answers only on a tab's first ad), real click on "הצגת מספר טלפון" (dealers: "יצירת קשר", first contact + dealership, form untouched), read the contact box's name and number
     listing.py               # CarListing, ScanPlan, ScanOutput
     car_search_filter.py     # search filter params & enums
   storage/
@@ -80,7 +80,7 @@ src/
     photo_archiver.py        # async httpx download of original photos
     background.py            # BackgroundPipeline: photos, processors, sale follow-up, then seller numbers; woken after each scan
     sale_watch.py            # removed ads with a plate: registry ownership checked ~12h for a week → sold / not_seen
-    phone_collector.py       # ads missing the seller's number or name: opened between scans (15/round, 3 tries, dealer ads without the button skipped), saved to ads.seller_phone/seller_name; scans read it for new ads
+    phone_collector.py       # ads missing the seller's number or name: opened between scans (15/round, 3 tries, 1 for ads with no contact button), saved to ads.seller_phone/seller_name; scans read it for new ads
   processing/
     base.py                  # Processor interface (target "photo" or "ad")
     registry.py              # available processors, PROCESSORS env var

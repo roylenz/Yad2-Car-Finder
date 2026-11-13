@@ -171,6 +171,13 @@ class PhoneTests(unittest.TestCase):
         from car import seller_phone as phone
 
         self.assertEqual(phone.clean_name("  ליאור   גבע "), "ליאור גבע")
+        import json as _json
+
+        dealer = _json.dumps({"name": "דני", "text": "דני\n055-4500361\nחיוג מהיר", "agency": "Drive On Motors"})
+        self.assertEqual(phone._contact_from_box(dealer, None), phone.Contact("+972554500361", "דני (Drive On Motors)"))
+        private = _json.dumps({"name": "ליאורגבע", "text": "ליאורגבע\n055-4393473", "agency": ""})
+        self.assertEqual(phone._contact_from_box(private, None).name, "ליאורגבע")
+        self.assertEqual(phone._contact_from_box("{}", "+972501234567"), phone.Contact("+972501234567", None))
         self.assertIsNone(phone.clean_name(""))
         before = "שירות לקוחות 03-1234567\nהצגת מספר טלפון"
         after = "שירות לקוחות 03-1234567\nלאה\n055-4393473"
