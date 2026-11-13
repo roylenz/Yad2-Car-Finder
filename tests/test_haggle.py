@@ -170,6 +170,8 @@ class PhoneTests(unittest.TestCase):
     def test_the_new_number_on_the_page_in_international_form(self):
         from car import seller_phone as phone
 
+        self.assertEqual(phone.clean_name("  ליאור   גבע "), "ליאור גבע")
+        self.assertIsNone(phone.clean_name(""))
         before = "שירות לקוחות 03-1234567\nהצגת מספר טלפון"
         after = "שירות לקוחות 03-1234567\nלאה\n055-4393473"
         self.assertEqual(phone.find_number(after, before), "+972554393473")
@@ -194,6 +196,7 @@ class VoiceTests(unittest.TestCase):
         self.assertIn("ONE question about ONE thing per turn", prompt)
         self.assertIn("עוד הפעם", prompt)
         self.assertIn("{{buyer}}", agent["first_message"])
+        self.assertTrue(agent["first_message"].startswith("{{hello}},"))
         self.assertIn("Never ask the seller to send anything", prompt)
         self.assertIn("months_with_dealer", prompt)
         self.assertIn("explain where your number comes from", prompt)
@@ -215,6 +218,10 @@ class VoiceTests(unittest.TestCase):
         variables = voice.dynamic_variables(facts, {**BRIEF, "model": "x", "cost_usd": 1})
         self.assertEqual(variables["car_title"], "דונגפנג בוקס")
         self.assertEqual(variables["buyer"], "רועי")
+        self.assertEqual(variables["hello"], "היי")  # no seller name
+        named = voice.dynamic_variables({**facts, "ad": {**facts["ad"], "seller_name": "דנה כהן"}}, BRIEF)
+        self.assertEqual(named["hello"], "היי דנה")
+        self.assertIsNone(voice.first_name("ליאורגבע"))  # first and last name run together
         self.assertEqual(variables["walk_away"], "₪88,000")
         self.assertNotIn("cost_usd", variables["brief"])
         sent = json.loads(variables["facts"])

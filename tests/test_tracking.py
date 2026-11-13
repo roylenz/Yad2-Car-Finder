@@ -451,15 +451,17 @@ class SellerPhoneTests(TempStateTestCase):
         self.search, _ = self.state.add_search(1, SEARCH, 10)
         self.tracker = AdTracker(self.state.ads)
 
-    def ad(self, token, phone=None):
-        return CarListing(f"https://www.yad2.co.il/vehicles/item/{token}", "Car", 90000, seller_phone=phone)
+    def ad(self, token, phone=None, name=None):
+        return CarListing(f"https://www.yad2.co.il/vehicles/item/{token}", "Car", 90000,
+                          seller_phone=phone, seller_name=name)
 
     def test_number_from_the_ad_page_is_saved_and_kept(self):
-        self.tracker.apply(1, self.search.id, ScanOutput([self.ad("phone001", "+972554393473"), self.ad("phone002")]))
+        self.tracker.apply(1, self.search.id, ScanOutput([self.ad("phone001", "+972554393473", "ליאורגבע"), self.ad("phone002")]))
         self.tracker.apply(1, self.search.id, ScanOutput([self.ad("phone001"), self.ad("phone002")]))
         with self.state.engine.connect() as db:
-            saved = dict(db.execute(select(ads.c.token, ads.c.seller_phone)).all())
-        self.assertEqual(saved, {"phone001": "+972554393473", "phone002": None})
+            saved = {row.token: (row.seller_phone, row.seller_name)
+                     for row in db.execute(select(ads.c.token, ads.c.seller_phone, ads.c.seller_name))}
+        self.assertEqual(saved, {"phone001": ("+972554393473", "ליאורגבע"), "phone002": (None, None)})
         # No phone change is logged as an ad change.
         self.assertEqual(self.count(ad_snapshots, ad_snapshots.c.changes.is_not(None)), 0)
 
@@ -469,7 +471,9 @@ class SellerPhoneTests(TempStateTestCase):
         from tracking import phone_collector
 
         self.tracker.apply(1, self.search.id, ScanOutput([self.ad("phone001"), self.ad("phone002")]))
-        numbers = {"phone001": "+972501234567", "phone002": None}
+        from car.seller_phone import Contact
+
+        numbers = {"phone001": Contact("+972501234567", "דנה"), "phone002": Contact()}
 
         class Tab:
             async def close(self):
@@ -507,3 +511,11 @@ class SellerPhoneTests(TempStateTestCase):
             self.assertEqual(self.state.ads.ads_without_phone(), [])  # three failed tries
             self.assertEqual(asyncio.run(collector.run()), 0)
             self.assertEqual(asyncio.run(collector.run(busy=lambda: True)), 0)
+        with self.state.engine.connect() as db:
+            row = db.execute(select(ads.c.seller_phone, ads.c.seller_name).where(ads.c.token == "phone001")).first()
+        self.assertEqual(tuple(row), ("+972501234567", "דנה"))
+        # A number without a name is looked up again, but not forever.
+        self.state.ads.save_phone("phone003", None)  # unknown token: no error
+        with self.state.engine.begin() as db:
+            db.execute(ads.update().where(ads.c.token == "phone001").values(seller_name=None, seller_phone_attempts=0))
+        self.assertEqual([t for t, _ in self.state.ads.ads_without_phone()], ["phone001"])

@@ -1,4 +1,4 @@
-"""Background lookup of seller numbers for ads that don't have one yet.
+"""Background lookup of seller numbers and names for ads that don't have them yet.
 
 Scans read the number when they open an ad page (car_finder._fetch_details); older ads, and any
 the scan missed, are opened here one by one between scans, with a pause between ads, and their
@@ -42,9 +42,9 @@ class PhoneCollector:
                     break
                 if progress:
                     progress(index, total)
-                number, tab = await seller_phone.reveal_in_new_tab(browser, url)
+                contact, tab = await seller_phone.reveal_in_new_tab(browser, url)
                 attempts = 1
-                if number is None:
+                if contact.phone is None:
                     kind, state = await Yad2CarFinder._page_state(tab)
                     if kind == "bot_check":
                         logger.warning("Bot check while reading seller numbers; stopping this round")
@@ -52,8 +52,8 @@ class PhoneCollector:
                     if kind == "yad2" and not await seller_phone.has_button(tab):
                         attempts = MAX_ATTEMPTS  # no number on this ad
                 await tab.close()
-                self.ads.save_phone(token, number, attempts=attempts)
-                found += number is not None
+                self.ads.save_phone(token, contact.phone, contact.name, attempts=attempts)
+                found += contact.phone is not None
                 await asyncio.sleep(random.uniform(*PAUSE_SECONDS))
         finally:
             browser.stop()

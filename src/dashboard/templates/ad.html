@@ -32,7 +32,8 @@
   <bdi dir="rtl">{{ ad.sub_model or "" }}</bdi>
   {% if ad.removed_at %}<span class="badge removed">Removed {{ ad.removed_at | when }}</span>{% endif %}
   · <a href="{{ ad.url }}" target="_blank" rel="noopener noreferrer">Open on Yad2</a>
-  {% if ad.seller_phone %}· Seller <a href="tel:{{ ad.seller_phone }}" dir="ltr">{{ ad.seller_phone | phone }}</a>{% endif %}
+  {% if ad.seller_phone or ad.seller_name %}· Seller {% if ad.seller_name %}<bdi dir="rtl">{{ ad.seller_name }}</bdi>{% endif %}
+  {% if ad.seller_phone %}<a href="tel:{{ ad.seller_phone }}" dir="ltr">{{ ad.seller_phone | phone }}</a>{% endif %}{% endif %}
 </p>
 
 <div class="tiles">

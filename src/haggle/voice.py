@@ -25,7 +25,7 @@ TTS_MODEL = "eleven_v4_turbo"  # lists Hebrew; flash v2.5 and multilingual v2 do
 DEFAULT_VOICE = "C39IE0ECRPwBxFNsQELk"  # "Hebrew Assistant"
 
 # Short: who is calling, that it is recorded, and straight to the first question.
-FIRST_MESSAGE = "היי, אני עוזר בינה מלאכותית של {{buyer}}, והשיחה מוקלטת. לגבי ה{{car_title}} ביד2 – המחיר גמיש?"
+FIRST_MESSAGE = "{{hello}}, אני עוזר בינה מלאכותית של {{buyer}}, והשיחה מוקלטת. לגבי ה{{car_title}} ביד2 – המחיר גמיש?"
 
 PHONE_NOTES = """
 
@@ -99,7 +99,7 @@ def agent_config(voice_id: str = DEFAULT_VOICE) -> dict:
                 "language": "he",
                 "dynamic_variables": {
                     "dynamic_variable_placeholders": {
-                        "car_title": "הרכב", "buyer": "הקונה", "walk_away": "₪0", "brief": "{}", "facts": "{}",
+                        "car_title": "הרכב", "buyer": "הקונה", "hello": "היי", "walk_away": "₪0", "brief": "{}", "facts": "{}",
                     }
                 },
                 "prompt": {
@@ -165,12 +165,25 @@ def ensure_phone_number(agent_id: str, client: httpx.Client | None = None) -> st
     return phone_number_id
 
 
+def first_name(name: str | None) -> str | None:
+    """A first name to greet with: the first word, or the whole name when it is short. A long
+    single word is usually first and last name run together, so it isn't used."""
+    words = (name or "").split()
+    if len(words) > 1:
+        return words[0]
+    if words and len(words[0]) <= 6:
+        return words[0]
+    return None
+
+
 def dynamic_variables(facts: dict, brief: dict) -> dict:
     ad = facts["ad"]
+    greet = first_name(ad.get("seller_name"))
     clean = {key: value for key, value in brief.items() if key not in ("model", "cost_usd", "budget")}
     return {
         "car_title": ad["title"],
         "buyer": buyer_name(),
+        "hello": f"היי {greet}" if greet else "היי",
         "walk_away": f"₪{brief['walk_away_price']:,}",
         "brief": json.dumps(clean, ensure_ascii=False),
         "facts": json.dumps(essentials(facts), ensure_ascii=False, default=str),

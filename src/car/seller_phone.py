@@ -1,11 +1,13 @@
-"""The seller's phone number on a Yad2 ad page, read the way a buyer gets it: press
-"הצגת מספר טלפון" (with real mouse events; a scripted click is ignored) and read the number shown.
+"""The seller's phone number and name on a Yad2 ad page, read the way a buyer gets them: press
+"הצגת מספר טלפון" (with real mouse events; a scripted click is ignored) and read the contact box
+that appears (the name as the seller wrote it, then the number).
 
 Yad2 shows a forwarding number that relays the call to the seller, so keeping it is fine.
 """
 
 import re
 import time
+from dataclasses import dataclass
 
 import nodriver as uc
 from nodriver.core.connection import ProtocolException
@@ -25,6 +27,31 @@ _BUTTON_EXPRESSION = f"""(() => {{
     button.scrollIntoView({{block: "center"}});
     return document.body.innerText || " ";
 }})()"""
+
+
+@dataclass(frozen=True)
+class Contact:
+    phone: str | None = None  # +972 form
+    name: str | None = None
+
+
+NONE = Contact()
+
+# The contact box shown after the click: its first line is the seller's name.
+_NAME_EXPRESSION = """(() => {
+    const box = document.querySelector("[data-testid=private-contact-info]")
+        || document.querySelector("[data-testid=phone-number-link]")?.closest("li");
+    if (!box) return "";
+    const skip = /\\d{7}|sms|הודעה|צ׳אט|צ'אט/i;
+    const leaf = [...box.querySelectorAll("*")].find(e =>
+        !e.children.length && e.textContent.trim() && !skip.test(e.textContent));
+    return leaf ? leaf.textContent.trim() : "";
+})()"""
+
+
+def clean_name(text: str | None) -> str | None:
+    name = " ".join((text or "").split())
+    return name[:60] or None
 
 
 def international(number: str) -> str:
@@ -51,8 +78,8 @@ async def desktop_layout(tab: uc.Tab) -> None:
 
 
 async def reveal_in_new_tab(browser: uc.Browser, url: str, button_wait: float = 15,
-                            reveal_wait: float = 12) -> tuple[str | None, uc.Tab]:
-    """Open the ad in a new desktop-size tab and read the number. The button only answers on the
+                            reveal_wait: float = 12) -> tuple[Contact, uc.Tab]:
+    """Open the ad in a new desktop-size tab and read the contact. The button only answers on the
     first ad page a tab shows, so every ad gets its own tab; the caller closes it."""
     tab = await browser.get("about:blank", new_tab=True)
     await desktop_layout(tab)
@@ -68,10 +95,11 @@ async def has_button(tab: uc.Tab) -> bool:
         return True  # unknown: try again later
 
 
-async def reveal(tab: uc.Tab, button_wait: float = 10, reveal_wait: float = 12) -> str | None:
-    """On a loaded ad page: press the button and return the number in +972 form.
+async def reveal(tab: uc.Tab, button_wait: float = 10, reveal_wait: float = 12) -> Contact:
+    """On a loaded ad page: press the button and return the number (+972 form) and the name.
 
-    None when the page has no button (within `button_wait` seconds) or no number appears.
+    An empty Contact when the page has no button (within `button_wait` seconds) or no number
+    appears; the name may be missing when the number isn't.
     """
     deadline = time.monotonic() + button_wait
     while True:
@@ -82,7 +110,7 @@ async def reveal(tab: uc.Tab, button_wait: float = 10, reveal_wait: float = 12) 
         if before:
             break
         if time.monotonic() > deadline:
-            return None
+            return NONE
         await tab.sleep(0.5)
     # A click before the page is interactive does nothing, so click again if no number shows.
     for click in range(CLICKS):
@@ -100,5 +128,9 @@ async def reveal(tab: uc.Tab, button_wait: float = 10, reveal_wait: float = 12) 
             await tab.sleep(0.5)
             number = find_number(await tab.evaluate("document.body.innerText"), before)
             if number:
-                return number
-    return None
+                try:
+                    name = clean_name(await tab.evaluate(_NAME_EXPRESSION))
+                except ProtocolException:
+                    name = None
+                return Contact(number, name)
+    return NONE

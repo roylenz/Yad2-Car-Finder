@@ -137,6 +137,7 @@ class AdRepository:
                 last_seen_at=now,
                 details_fetched_at=now if listing.detailed else None,
                 seller_phone=listing.seller_phone,
+                seller_name=listing.seller_name,
                 seller_phone_checked_at=now if listing.seller_phone else None,
             )
         )
@@ -194,6 +195,8 @@ class AdRepository:
             values.update(sale_status=None, sold_month=None, sold_to=None)
         if listing.seller_phone:
             values.update(seller_phone=listing.seller_phone, seller_phone_checked_at=now)
+        if listing.seller_name:
+            values["seller_name"] = listing.seller_name
         if listing.detailed:
             values.update(raw=listing.raw, details_fetched_at=now)
         elif old.raw is None:
@@ -320,13 +323,20 @@ class AdRepository:
 
     # -- photos -------------------------------------------------------------------------------
 
+    @staticmethod
+    def _missing_contact(max_attempts: int):
+        return and_(
+            ads.c.removed_at.is_(None),
+            ads.c.seller_phone.is_(None) | ads.c.seller_name.is_(None),
+            ads.c.seller_phone_attempts < max_attempts,
+        )
+
     def ads_without_phone(self, limit: int = 20, max_attempts: int = 3) -> list[tuple[str, str]]:
-        """(token, url) of ads still on Yad2 with no seller number yet, newest first."""
+        """(token, url) of ads still on Yad2 missing the seller's number or name, newest first."""
         with self.engine.connect() as db:
             rows = db.execute(
                 select(ads.c.token, ads.c.url)
-                .where(ads.c.removed_at.is_(None), ads.c.seller_phone.is_(None),
-                       ads.c.seller_phone_attempts < max_attempts)
+                .where(self._missing_contact(max_attempts))
                 .order_by(ads.c.first_seen_at.desc())
                 .limit(limit)
             ).all()
@@ -335,19 +345,20 @@ class AdRepository:
     def count_without_phone(self, max_attempts: int = 3) -> int:
         with self.engine.connect() as db:
             return db.execute(
-                select(func.count()).select_from(ads)
-                .where(ads.c.removed_at.is_(None), ads.c.seller_phone.is_(None),
-                       ads.c.seller_phone_attempts < max_attempts)
+                select(func.count()).select_from(ads).where(self._missing_contact(max_attempts))
             ).scalar_one()
 
-    def save_phone(self, token: str, phone: str | None, now: datetime.datetime | None = None,
-                   attempts: int = 1) -> None:
-        """Record a lookup: the number, or `attempts` more failed attempts when it is None."""
+    def save_phone(self, token: str, phone: str | None, name: str | None = None,
+                   now: datetime.datetime | None = None, attempts: int = 1) -> None:
+        """Record a lookup: what was found; a lookup that missed the number or the name counts
+        `attempts` more tries, so an ad without one isn't opened forever."""
         now = now or utcnow()
         values = {"seller_phone_checked_at": now}
         if phone:
             values["seller_phone"] = phone
-        else:
+        if name:
+            values["seller_name"] = name
+        if not (phone and name):
             values["seller_phone_attempts"] = ads.c.seller_phone_attempts + attempts
         with self.engine.begin() as db:
             db.execute(update(ads).where(ads.c.token == token).values(**values))

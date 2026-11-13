@@ -45,6 +45,7 @@ def gather(engine: Engine, token: str, now: datetime.datetime | None = None) -> 
             "km_at_last_test": attributes.get("km_at_last_test"),
             "color": attributes.get("color"),
             "description": attributes.get("description"),
+            "seller_name": getattr(ad, "seller_name", None),
         },
         "listing": _listing_history(ad, history, same_car, floor, now),
         "market": _market(engine, ad, same_car, now),

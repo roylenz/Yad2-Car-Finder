@@ -58,7 +58,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "list":
         return _list(engine)
     if args.command == "phone":
-        print(_seller_phone(args.token, engine, args.refresh) or "")
+        contact = _seller_contact(args.token, engine, args.refresh)
+        if contact:
+            print(contact.phone, contact.name or "")
         return 0
     facts = car_facts.gather(engine, args.token)
     if facts is None:
@@ -78,9 +80,16 @@ def main(argv: list[str] | None = None) -> int:
 def _call(facts: dict, brief: dict, args, folder) -> int:
     from haggle import voice
 
-    to = args.to or _seller_phone(args.token, get_engine(default_database_url()))
+    from haggle import phone
+
+    engine = get_engine(default_database_url())
+    # A test call (--to) still greets the ad's seller by name when it is known.
+    contact = phone.saved_contact(args.token, engine) if args.to else _seller_contact(args.token, engine)
+    to = args.to or (contact and contact.phone)
     if not to:
         return 1
+    if contact and contact.name and not facts["ad"].get("seller_name"):
+        facts = {**facts, "ad": {**facts["ad"], "seller_name": contact.name}}
     placed = voice.place_call(facts, brief, to)
     conversation_id = placed.get("conversation_id")
     print(f"Calling {to} ({placed.get('message')}); conversation {conversation_id}")
@@ -97,12 +106,12 @@ def _call(facts: dict, brief: dict, args, folder) -> int:
     return 0
 
 
-def _seller_phone(token: str, engine, refresh: bool = False) -> str | None:
-    """The number the bot saved for the ad, else read from the ad now."""
+def _seller_contact(token: str, engine, refresh: bool = False):
+    """The number and name the bot saved for the ad, else read from the ad now."""
     from haggle import phone
 
     try:
-        return phone.seller_phone_for(token, engine, refresh)
+        return phone.seller_contact(token, engine, refresh)
     except phone.PhoneError as error:
         print(f"Couldn't get the seller's number: {error}", file=sys.stderr)
         return None

@@ -360,8 +360,9 @@ class Yad2CarFinder:
                         return None
                     details = Yad2CarFinder._merge(listing, yad2_json.listing_from_json(item, True))
                     if want_phone:
+                        contact = await Yad2CarFinder._phone(tab, listing.url)
                         details = replace(
-                            details, seller_phone=await Yad2CarFinder._phone(tab, listing.url)
+                            details, seller_phone=contact.phone, seller_name=contact.name
                         )
                     return details
                 await tab.sleep(0.5)
@@ -371,18 +372,18 @@ class Yad2CarFinder:
             return listing
 
     @staticmethod
-    async def _phone(tab: uc.Tab, url: str) -> str | None:
-        """The seller's number, read in a tab of its own (the scan's tab keeps its layout, and the
+    async def _phone(tab: uc.Tab, url: str) -> seller_phone.Contact:
+        """The seller's number and name, read in a tab of its own (the scan's tab keeps its layout, and the
         button answers only on a tab's first ad page). A failure never fails the scan."""
         phone_tab = None
         try:
-            number, phone_tab = await seller_phone.reveal_in_new_tab(
+            contact, phone_tab = await seller_phone.reveal_in_new_tab(
                 tab.browser, url, button_wait=6, reveal_wait=9
             )
-            return number
+            return contact
         except Exception as error:
             logger.warning("Could not read the seller's number", url=url, error=str(error))
-            return None
+            return seller_phone.NONE
         finally:
             if phone_tab is not None:
                 try:

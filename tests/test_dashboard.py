@@ -198,10 +198,11 @@ class DashboardTests(unittest.TestCase):
 
         self.assertNotIn("tel:", self.client.get("/ads/6rg1e7dp").text)
         with self.state.engine.begin() as db:
-            db.execute(update(ads).where(ads.c.token == "6rg1e7dp").values(seller_phone="+972554393473"))
+            db.execute(update(ads).where(ads.c.token == "6rg1e7dp").values(seller_phone="+972554393473", seller_name="ליאורגבע"))
         page = self.client.get("/ads/6rg1e7dp").text
         self.assertIn('href="tel:+972554393473"', page)
         self.assertIn("055-4393473", page)
+        self.assertIn("ליאורגבע", page)
 
     def test_ad_page_shows_test_and_registration_details(self):
         text = self.client.get("/ads/6rg1e7dp").text
