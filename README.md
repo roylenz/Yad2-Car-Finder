@@ -190,6 +190,31 @@ a later pass). The bundled processors:
 | `repost_matcher` | ad | Links reposts of the same car by shared photos and similar descriptions |
 | `claude_condition` | ad | Claude Sonnet inspects photos and description for damage and price factors (one request per active ad, ~3 cents) |
 
+## Haggling agent (trying it out)
+
+An early version of an agent that negotiates a car's price for you, run on a PC rather than the
+Pi. It reads a copy of the database and never writes to it; briefs and call transcripts go to
+`data/haggle/<ad ID>/`. It needs `ANTHROPIC_API_KEY` in the local `.env` (or `ant auth login`);
+`HAGGLE_MODEL` picks the Claude model (default Claude Opus 5.5).
+
+- `brief` - what the car is worth and why: time on the market, every price drop and repost,
+  comparable cars' prices, registry mismatches and photo findings, plus an opening offer, target
+  and walk-away price (never above `--max`) and what to say and ask in Hebrew
+- `rehearse` - the phone call as text: Claude calls in Hebrew, says it is an AI calling for a
+  buyer, negotiates within the walk-away price, never commits to buying, and reports the outcome.
+  You type the seller's side, or `--auto-seller` lets Claude play a seller with a secret lowest price
+
+```bash
+# Copy the Pi's database (read-only on the Pi)
+ssh pi 'cd ~/Yad2-Car-Finder && sudo docker compose exec -T bot python -c "import sqlite3; s=sqlite3.connect(\"/app/data/bot.sqlite3\"); d=sqlite3.connect(\"/tmp/copy.sqlite3\"); s.backup(d); d.close()" && sudo docker compose exec -T bot cat /tmp/copy.sqlite3' > data/pi-copy.sqlite3
+
+export BOT_DB_PATH=data/pi-copy.sqlite3
+RUN="uv run --no-project --python 3.12 --with-requirements requirements.txt"
+PYTHONPATH=src $RUN python -m haggle list
+PYTHONPATH=src $RUN python -m haggle brief <ad ID> --max 90000
+PYTHONPATH=src $RUN python -m haggle rehearse <ad ID> --max 90000 --auto-seller
+```
+
 ## Tests
 
 ```bash
