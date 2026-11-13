@@ -145,6 +145,7 @@ class VoiceTests(unittest.TestCase):
             self.assertIn(placeholder, prompt)
         self.assertIn("Never commit to buying", prompt)
         self.assertIn("ONE question per turn", prompt)
+        self.assertIn("עוד הפעם", prompt)
         self.assertIn("המחיר גמיש", agent["first_message"])
         self.assertTrue(config["conversation_config"]["turn"]["speculative_turn"])
         self.assertTrue(config["conversation_config"]["vad"]["background_voice_detection"])

@@ -32,8 +32,10 @@ PHONE_NOTES = """
 This is a live phone call through a text-to-speech voice. Your opening line already said you \
 are an AI and that the call is recorded, and asked whether the price is negotiable: carry on \
 from the seller's answer. Write numbers the way they are said in Hebrew \
-(for example "שבעים וחמישה אלף" rather than 75,000). If the line is unclear, ask the seller to \
-repeat. If you reach voicemail, hang up without leaving a message."""
+(for example "שבעים וחמישה אלף" rather than 75,000). The seller's words reach you through speech \
+recognition, which often garbles them: if a reply doesn't make sense, ask the seller to repeat \
+it, and never end the call over words you are not sure of. "עוד הפעם", "מה?" or "לא הבנתי" \
+mean the seller wants your last question again: repeat it, shorter. If you reach voicemail, hang up without leaving a message."""
 
 OUTCOME_FIELDS = {
     "result": {
