@@ -15,6 +15,7 @@ import datetime
 import json
 import sys
 
+from dotenv import load_dotenv
 from sqlalchemy import select
 
 from haggle import brief as briefs
@@ -39,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     rehearse.add_argument("--persona", help="Simulated seller's personality")
     rehearse.add_argument("--turns", type=int, default=24, help="Stop after this many caller turns")
     args = parser.parse_args(argv)
+    load_dotenv()
 
     engine = get_engine(default_database_url())
     if args.command == "list":

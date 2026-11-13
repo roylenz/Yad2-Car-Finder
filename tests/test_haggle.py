@@ -69,6 +69,7 @@ class HaggleTests(unittest.TestCase):
     def test_facts_cover_history_and_market(self):
         facts = car_facts.gather(self.state.engine, "target01", now=datetime.datetime(2026, 10, 1))
         self.assertEqual(facts["ad"]["asking_price"], 95000)
+        self.assertEqual(facts["today"], "2026-10-01")
         self.assertEqual(facts["listing"]["days_on_market"], 30)
         self.assertEqual(facts["listing"]["total_drop"], 4000)
         self.assertEqual(facts["listing"]["price_changes"], [{"date": "2026-09-21", "from": 99000, "to": 95000}])

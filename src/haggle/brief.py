@@ -9,7 +9,8 @@ SYSTEM = """You prepare a buyer to negotiate the price of a used car advertised 
 You get everything known about the car as JSON: the ad, how long it has been listed and every \
 price change (reposts included), asking prices of comparable cars, the vehicle registry check \
 (ownership history, test dates, where the ad and registry disagree) and an inspection of the \
-ad's photos. Prices are in shekels and are asking prices, not sale prices.
+ad's photos. Prices are in shekels and are asking prices, not sale prices. `today` is the date of the call;
+work out how far away any date is from it.
 
 Estimate a fair price, then suggest an opening offer, a target and a walk-away price. Base every \
 argument on the facts given, and cite the evidence (numbers, dates, photo numbers, registry \

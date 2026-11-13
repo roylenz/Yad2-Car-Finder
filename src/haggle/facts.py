@@ -23,6 +23,7 @@ def gather(engine: Engine, token: str, now: datetime.datetime | None = None) -> 
     attributes = ad.attributes or {}
 
     facts = {
+        "today": now.date().isoformat(),
         "ad": {
             "token": ad.token,
             "url": f"https://www.yad2.co.il/vehicles/item/{ad.token}",
