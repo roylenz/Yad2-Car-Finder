@@ -130,5 +130,41 @@ class HaggleTests(unittest.TestCase):
         self.assertIn("₪90,000", client.requests[0]["system"])
 
 
+class VoiceTests(unittest.TestCase):
+    def test_agent_config_keeps_the_rehearsal_rules_and_speaks_hebrew(self):
+        from haggle import voice
+
+        config = voice.agent_config()
+        agent = config["conversation_config"]["agent"]
+        self.assertEqual(agent["language"], "he")
+        self.assertTrue(agent["disable_first_message_interruptions"])
+        self.assertIn("בינה מלאכותית", agent["first_message"])
+        self.assertIn("מוקלטת", agent["first_message"])  # recording notice
+        prompt = agent["prompt"]["prompt"]
+        for placeholder in ("{{walk_away}}", "{{brief}}", "{{facts}}"):
+            self.assertIn(placeholder, prompt)
+        self.assertIn("Never commit to buying", prompt)
+        self.assertIn("end_call", agent["prompt"]["built_in_tools"])
+        self.assertEqual(config["conversation_config"]["tts"]["model_id"], "eleven_v4_turbo")
+        self.assertIn("seller_lowest_price", config["platform_settings"]["data_collection"])
+
+    def test_dynamic_variables_and_outcome(self):
+        from haggle import voice
+
+        facts = {"ad": {"title": "דונגפנג בוקס", "year": 2025}, "listing": {}}
+        variables = voice.dynamic_variables(facts, {**BRIEF, "model": "x", "cost_usd": 1})
+        self.assertEqual(variables["car_title"], "דונגפנג בוקס 2025")
+        self.assertEqual(variables["walk_away"], "₪88,000")
+        self.assertNotIn("cost_usd", variables["brief"])
+        conversation = {
+            "status": "done",
+            "analysis": {"transcript_summary": "s", "data_collection_results": {
+                "seller_lowest_price": {"value": 76000}, "result": {"value": "seller_lowest_known"}}},
+            "metadata": {"call_duration_secs": 120, "phone_call": {"call_result": "answered"}},
+        }
+        self.assertEqual(voice.outcome(conversation)["seller_lowest_price"], 76000)
+        self.assertEqual(voice.outcome(conversation)["call_result"], "answered")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -4,6 +4,7 @@
     PYTHONPATH=src python -m haggle brief <token> [--max 95000]
     PYTHONPATH=src python -m haggle rehearse <token> [--max 95000]            # you play the seller
     PYTHONPATH=src python -m haggle rehearse <token> --auto-seller [--lowest 88000]
+    PYTHONPATH=src python -m haggle call <token> --to +9725... [--max 95000]     # real phone call
 
 Reads the database at BOT_DB_PATH (or DATA_DIR/bot.sqlite3) and never writes to it; briefs and
 call transcripts are saved under DATA_DIR/haggle/<token>/. Needs ANTHROPIC_API_KEY (or an
@@ -29,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="haggle", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("list", help="Cars on Yad2 now, cheapest first")
-    for name in ("brief", "rehearse"):
+    for name in ("brief", "rehearse", "call"):
         command = commands.add_parser(name)
         command.add_argument("token", help="Yad2 ad ID (the end of the ad's link)")
         command.add_argument("--max", type=int, help="The most you would pay")
@@ -39,6 +40,8 @@ def main(argv: list[str] | None = None) -> int:
     rehearse.add_argument("--lowest", type=int, help="Simulated seller's secret lowest price (default 5%% under asking)")
     rehearse.add_argument("--persona", help="Simulated seller's personality")
     rehearse.add_argument("--turns", type=int, default=24, help="Stop after this many caller turns")
+    call = commands.choices["call"]
+    call.add_argument("--to", required=True, help="Number to call, e.g. +97254...")
     args = parser.parse_args(argv)
     load_dotenv()
 
@@ -55,7 +58,28 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "brief":
         print(briefs.as_text(facts, brief))
         return 0
+    if args.command == "call":
+        return _call(facts, brief, args, folder)
     return _rehearse(facts, brief, args, folder)
+
+
+def _call(facts: dict, brief: dict, args, folder) -> int:
+    from haggle import voice
+
+    placed = voice.place_call(facts, brief, args.to)
+    conversation_id = placed.get("conversation_id")
+    print(f"Calling {args.to} ({placed.get('message')}); conversation {conversation_id}")
+    if not conversation_id:
+        return 1
+    conversation = voice.wait_for_result(conversation_id)
+    path = voice.save_result(conversation, folder)
+    for turn in conversation.get("transcript") or []:
+        if turn.get("message"):
+            speaker = "Caller" if turn["role"] == "agent" else "Seller"
+            print(f"{speaker} ({turn.get('time_in_call_secs', 0)}s): {turn['message']}")
+    print("\nOutcome:", json.dumps(voice.outcome(conversation), ensure_ascii=False, indent=1))
+    print(f"Saved {path}")
+    return 0
 
 
 def _list(engine) -> int:
