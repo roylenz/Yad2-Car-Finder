@@ -221,7 +221,10 @@ answering sooner than Opus) and dials through the Twilio number. Its short openi
 be interrupted, says it is an AI calling for you (your first name from `HAGGLE_BUYER_NAME`, e.g.
 in `.env`; "הקונה" when unset) and that the call is recorded, and asks whether the price is
 negotiable. Then it asks whether there's anything to know about the car (damage, faults), at most
-one or two of the brief's questions (never a request to send photos or documents), and negotiates: one short sentence and one question per turn.
+one or two of the brief's questions (never a request to send photos or documents, nor anything
+that's the same for every car of the model, like the warranty), and negotiates: one short sentence
+and one question per turn. When the seller says an offer is too low, it explains the number: time on
+the market, a long time with a dealer, a test due soon, cheaper cars on Yad2.
 It replies as soon as the seller pauses (eager, speculative turn-taking) and filters out voices
 in the background so they don't hold the seller's turn open. One agent serves every car: the brief goes in as dynamic variables. The first run creates
 the agent and imports the Twilio number into ElevenLabs (IDs in `data/haggle/voice.json`); the

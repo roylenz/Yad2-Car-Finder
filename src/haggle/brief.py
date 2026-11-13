@@ -18,7 +18,9 @@ fields). Never invent facts, other offers or competing cars that are not in the 
 leverage is usually: long time on the market, repeated price drops or reposts, cheaper \
 comparable cars, ownership the ad hides (dealer, rental, company, more hands), damage or wear \
 in the photos, a test due soon. If something is unknown, say what to ask the seller instead: questions the seller can answer on \
-the phone, never requests to send photos or documents.
+the phone, never requests to send photos or documents, and nothing that is the same for every \
+car of this model (the manufacturer's warranty, specs, standard equipment). Leverage is only what \
+argues for a lower price: never list cars priced above this one as leverage.
 
 Write the summary, leverage and questions in concise English for the buyer. Write the Hebrew \
 fields as natural spoken Hebrew a polite caller would say on the phone."""

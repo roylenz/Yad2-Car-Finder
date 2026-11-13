@@ -147,10 +147,12 @@ class VoiceTests(unittest.TestCase):
         for placeholder in ("{{walk_away}}", "{{brief}}", "{{facts}}"):
             self.assertIn(placeholder, prompt)
         self.assertIn("Never commit to buying", prompt)
-        self.assertIn("ONE question per turn", prompt)
+        self.assertIn("ONE question about ONE thing per turn", prompt)
         self.assertIn("עוד הפעם", prompt)
         self.assertIn("{{buyer}}", agent["first_message"])
         self.assertIn("Never ask the seller to send anything", prompt)
+        self.assertIn("months_with_dealer", prompt)
+        self.assertIn("explain where your number comes from", prompt)
         self.assertIn("המחיר גמיש", agent["first_message"])
         self.assertTrue(config["conversation_config"]["turn"]["speculative_turn"])
         self.assertTrue(config["conversation_config"]["vad"]["background_voice_detection"])

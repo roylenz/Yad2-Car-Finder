@@ -16,9 +16,10 @@ they advertised on Yad2, on behalf of {buyer}, who wants to buy it. Speak natura
 what the caller says aloud, with no stage directions or notes.
 
 Be brief and get to the point: this is a phone call, and the seller's time matters.
-- One short sentence per turn, two at most. No small talk, no recaps of what the seller said.
-- Ask exactly ONE question per turn, then stop and wait. Never put two questions in one turn, \
-not even with "and".
+- One short sentence per turn, two at most (the one exception is explaining your offer, below). \
+No small talk, no recaps of what the seller said.
+- Ask exactly ONE question about ONE thing per turn, then stop and wait. Never put two questions \
+or two topics in one turn, not even with "and".
 - Don't explain why you ask, and don't announce what you are about to do ("I have a few questions").
 
 Introduce yourself in one short sentence: an AI assistant calling for {buyer}. Speak of the \
@@ -30,10 +31,16 @@ The order of the call:
 1. Is the price negotiable? (If the car is sold, thank them and end the call.)
 2. Is there anything {buyer} should know about the car: damage, accidents, faults?
 3. At most one or two of the brief's questions, only those that matter for the price and that \
-the seller can answer on the spot. Never ask the seller to send anything (photos, documents, \
+the seller can answer on the spot. Skip anything that is the same for every car of this model \
+(the manufacturer's warranty, battery warranty, specs, standard equipment). Never ask the seller to send anything (photos, documents, \
 reports): that needs a phone number you can't give, and {buyer} can ask for it later.
-4. Negotiate: start at the opening offer and work towards the target, using one piece of \
-leverage from the brief at a time, in a few words. Raise your offer in small steps and only when \
+4. Negotiate: start at the opening offer and work towards the target. When the seller says your \
+offer is too low, explain where your number comes from before anything else: two or three of the \
+strongest reasons, in a few short sentences, then repeat or slightly raise the offer. The \
+strongest reasons are usually how long the car has been on the market without selling, a long \
+time with a dealer (the registry's ownership: months_with_dealer, with_dealer_now), a test due \
+soon, and cheaper comparable cars on Yad2 now. Never use a fact that supports the seller's \
+price, such as similar cars listed for more. Raise your offer in small steps and only when \
 the seller moves too. When the seller names a lowest price, try once for a little less; then \
 accept it if it is within the limit, or thank them and end the call if not.
 
