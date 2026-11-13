@@ -14,24 +14,24 @@ from pathlib import Path
 
 import httpx
 
-from haggle.call import AGENT_SYSTEM
+from haggle.call import AGENT_SYSTEM, essentials
 from storage.db import data_dir
 
 API = "https://api.elevenlabs.io/v1/convai"
 AGENT_NAME = "Yad2 haggler"
-LLM = os.getenv("HAGGLE_VOICE_LLM", "claude-opus-5-5")
+# Sonnet starts speaking sooner than Opus; on the phone a pause of a second or two is noticed.
+LLM = os.getenv("HAGGLE_VOICE_LLM", "claude-sonnet-5-5")
 TTS_MODEL = "eleven_v4_turbo"  # lists Hebrew; flash v2.5 and multilingual v2 do not
 DEFAULT_VOICE = "C39IE0ECRPwBxFNsQELk"  # "Hebrew Assistant"
 
-FIRST_MESSAGE = (
-    "שלום, כאן עוזר בינה מלאכותית שמתקשר בשם קונה שמתעניין ב{{car_title}} שפרסמת ביד2. "
-    "לידיעתך, השיחה מוקלטת. הרכב עדיין למכירה?"
-)
+# Short: who is calling, that it is recorded, and straight to the first question.
+FIRST_MESSAGE = "היי, אני עוזר בינה מלאכותית של קונה, והשיחה מוקלטת. לגבי ה{{car_title}} ביד2 – המחיר גמיש?"
 
 PHONE_NOTES = """
 
 This is a live phone call through a text-to-speech voice. Your opening line already said you \
-are an AI and that the call is recorded. Write numbers the way they are said in Hebrew \
+are an AI and that the call is recorded, and asked whether the price is negotiable: carry on \
+from the seller's answer. Write numbers the way they are said in Hebrew \
 (for example "שבעים וחמישה אלף" rather than 75,000). If the line is unclear, ask the seller to \
 repeat. If you reach voicemail, hang up without leaving a message."""
 
@@ -102,7 +102,7 @@ def agent_config(voice_id: str = DEFAULT_VOICE) -> dict:
                 "prompt": {
                     "prompt": prompt,
                     "llm": LLM,
-                    "reasoning_effort": "low",
+                    "reasoning_effort": "none",
                     "built_in_tools": {
                         "end_call": {
                             "name": "end_call",
@@ -112,6 +112,8 @@ def agent_config(voice_id: str = DEFAULT_VOICE) -> dict:
                     },
                 },
             },
+            # Answer as soon as the seller stops: start thinking during the pause, before the turn is certain.
+            "turn": {"turn_eagerness": "eager", "speculative_turn": True},
             "tts": {"model_id": TTS_MODEL, "voice_id": voice_id},
             "conversation": {"max_duration_seconds": 480},
         },
@@ -161,10 +163,10 @@ def dynamic_variables(facts: dict, brief: dict) -> dict:
     ad = facts["ad"]
     clean = {key: value for key, value in brief.items() if key not in ("model", "cost_usd")}
     return {
-        "car_title": " ".join(str(part) for part in (ad["title"], ad.get("year")) if part),
+        "car_title": ad["title"],
         "walk_away": f"₪{brief['walk_away_price']:,}",
         "brief": json.dumps(clean, ensure_ascii=False),
-        "facts": json.dumps(facts, ensure_ascii=False, default=str),
+        "facts": json.dumps(essentials(facts), ensure_ascii=False, default=str),
     }
 
 

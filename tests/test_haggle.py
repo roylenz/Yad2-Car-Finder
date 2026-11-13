@@ -144,6 +144,9 @@ class VoiceTests(unittest.TestCase):
         for placeholder in ("{{walk_away}}", "{{brief}}", "{{facts}}"):
             self.assertIn(placeholder, prompt)
         self.assertIn("Never commit to buying", prompt)
+        self.assertIn("ONE question per turn", prompt)
+        self.assertIn("המחיר גמיש", agent["first_message"])
+        self.assertTrue(config["conversation_config"]["turn"]["speculative_turn"])
         self.assertIn("end_call", agent["prompt"]["built_in_tools"])
         self.assertEqual(config["conversation_config"]["tts"]["model_id"], "eleven_v4_turbo")
         self.assertIn("seller_lowest_price", config["platform_settings"]["data_collection"])
@@ -151,11 +154,18 @@ class VoiceTests(unittest.TestCase):
     def test_dynamic_variables_and_outcome(self):
         from haggle import voice
 
-        facts = {"ad": {"title": "דונגפנג בוקס", "year": 2025}, "listing": {}}
+        facts = {"today": "2026-11-13", "ad": {"title": "דונגפנג בוקס", "year": 2025, "url": "u"}, "listing": {},
+                 "market": {"comparables": 3, "median_price": 80000, "cheapest_on_yad2_now": []},
+                 "registry": {"plate_confirmed": True, "ownership": {"owners_not_counting_dealers": 1, "history": [1, 2]}},
+                 "condition": None}
         variables = voice.dynamic_variables(facts, {**BRIEF, "model": "x", "cost_usd": 1})
-        self.assertEqual(variables["car_title"], "דונגפנג בוקס 2025")
+        self.assertEqual(variables["car_title"], "דונגפנג בוקס")
         self.assertEqual(variables["walk_away"], "₪88,000")
         self.assertNotIn("cost_usd", variables["brief"])
+        sent = json.loads(variables["facts"])
+        self.assertEqual(sent["market"], {"comparables": 3, "median_price": 80000})
+        self.assertNotIn("history", sent["registry"]["ownership"])
+        self.assertNotIn("url", sent["ad"])
         conversation = {
             "status": "done",
             "analysis": {"transcript_summary": "s", "data_collection_results": {

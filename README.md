@@ -216,9 +216,12 @@ PYTHONPATH=src $RUN python -m haggle rehearse <ad ID> --max 90000 --auto-seller
 ```
 
 `call` makes a real phone call: an ElevenLabs agent speaks Hebrew (voice "Hebrew Assistant",
-`eleven_v4_turbo`), thinks with Claude (`HAGGLE_VOICE_LLM`, default Claude Opus 5.5) and dials
-through the Twilio number. Its opening line, which can't be interrupted, says it is an AI and that the call is
-recorded. One agent serves every car: the brief goes in as dynamic variables. The first run creates
+`eleven_v4_turbo`), thinks with Claude (`HAGGLE_VOICE_LLM`, default Claude Sonnet 5.5, which starts
+answering sooner than Opus) and dials through the Twilio number. Its short opening line, which can't
+be interrupted, says it is an AI and that the call is recorded, and asks whether the price is
+negotiable. Then it asks whether there's anything to know about the car (damage, faults), at most
+one or two of the brief's questions, and negotiates: one short sentence and one question per turn.
+It replies as soon as the seller pauses (eager, speculative turn-taking). One agent serves every car: the brief goes in as dynamic variables. The first run creates
 the agent and imports the Twilio number into ElevenLabs (IDs in `data/haggle/voice.json`); the
 transcript, the outcome ElevenLabs extracts and the recording are saved next to the brief. Needs
 `ELEVENLABS_API_KEY`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` and `TWILIO_PHONE_NUMBER`.

@@ -103,7 +103,7 @@ src/
     facts.py                 # read-only facts for one car: price history, market, registry, condition
     brief.py                 # Claude negotiation brief (offers capped at the buyer's max)
     call.py                  # CallAgent (text phone call, end_call tool) and SimulatedSeller
-    voice.py                 # real calls: ElevenLabs agent (Hebrew, Claude LLM) + imported Twilio number; brief as dynamic variables
+    voice.py                 # real calls: ElevenLabs agent (Hebrew, Claude Sonnet, short turns, one question each) + imported Twilio number; brief as dynamic variables
     __main__.py              # CLI: list / brief / rehearse / call; output in DATA_DIR/haggle/<token>/
   common/
     config.py                # bot config (from .env), logger config, paths

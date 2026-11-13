@@ -11,19 +11,27 @@ from dataclasses import dataclass, field
 from haggle import claude
 
 AGENT_SYSTEM = """You are an AI assistant phoning a private seller in Israel about the used car \
-they advertised on Yad2, on behalf of a buyer. Speak natural, polite, spoken Hebrew, in short \
-sentences (one to three per turn): this is a phone call, not a chat. Say only what the caller \
-says aloud, with no stage directions or notes.
+they advertised on Yad2, on behalf of a buyer. Speak natural, casual, spoken Hebrew. Say only \
+what the caller says aloud, with no stage directions or notes.
 
-At the start of the call, say who you are: an AI assistant calling for a buyer who is \
-interested in the car. Never pretend to be human; if asked, confirm you are an AI. If the \
-seller does not want to talk to an AI, apologise, say the buyer may call personally, and end \
-the call.
+Be brief and get to the point: this is a phone call, and the seller's time matters.
+- One short sentence per turn, two at most. No small talk, no recaps of what the seller said.
+- Ask exactly ONE question per turn, then stop and wait. Never put two questions in one turn, \
+not even with "and".
+- Don't explain why you ask, and don't announce what you are about to do ("I have a few questions").
 
-Your goal is the lowest price the seller would accept, and the answers to the buyer's questions. \
-Ask before you offer: confirm the car is still for sale, ask the questions in the brief, then \
-negotiate from the opening offer towards the target, using the leverage in the brief. Raise \
-your offer in small steps and only when the seller moves too.
+Introduce yourself in one short sentence: an AI assistant calling for a buyer. Never pretend \
+to be human; if asked, confirm you are an AI. If the seller does not want to talk to an AI, \
+apologise, say the buyer may call personally, and end the call.
+
+The order of the call:
+1. Is the price negotiable? (If the car is sold, thank them and end the call.)
+2. Is there anything the buyer should know about the car: damage, accidents, faults?
+3. At most one or two of the brief's questions, only those that matter for the price.
+4. Negotiate: start at the opening offer and work towards the target, using one piece of \
+leverage from the brief at a time, in a few words. Raise your offer in small steps and only when \
+the seller moves too. When the seller names a lowest price, try once for a little less; then \
+accept it if it is within the limit, or thank them and end the call if not.
 
 Hard limits:
 - Never offer or agree to more than the walk-away price ({walk_away}).
@@ -82,6 +90,30 @@ The ad:
 {ad}"""
 
 
+def essentials(facts: dict) -> dict:
+    """The car data the caller needs on the phone: the brief already carries the analysis.
+
+    A shorter prompt answers sooner, so the market's comparables, the ownership history and the
+    photo inspection's details are left to the brief.
+    """
+    ad = {key: value for key, value in facts["ad"].items() if key not in ("token", "url") and value not in (None, "")}
+    market = {key: facts["market"].get(key) for key in ("comparables", "median_price", "min_price", "cheaper_than_this")
+              if facts["market"].get(key) is not None}
+    registry = {key: value for key, value in facts.get("registry", {}).items() if key != "ownership"}
+    ownership = facts.get("registry", {}).get("ownership")
+    if ownership:
+        registry["ownership"] = {key: value for key, value in ownership.items() if key != "history"}
+    condition = facts.get("condition") or {}
+    return {
+        "today": facts["today"],
+        "ad": ad,
+        "listing": facts["listing"],
+        "market": market,
+        "registry": registry,
+        "condition": {key: condition[key] for key in ("overall_condition", "damage") if condition.get(key)},
+    }
+
+
 @dataclass
 class Turn:
     speaker: str  # "caller" or "seller"
@@ -105,7 +137,7 @@ class CallAgent:
         self.system = AGENT_SYSTEM.format(
             walk_away=f"₪{self.brief['walk_away_price']:,}",
             brief=json.dumps(brief, ensure_ascii=False, indent=1),
-            facts=json.dumps(self.facts, ensure_ascii=False, indent=1, default=str),
+            facts=json.dumps(essentials(self.facts), ensure_ascii=False, indent=1, default=str),
         )
 
     @property
