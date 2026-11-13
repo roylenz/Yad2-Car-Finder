@@ -12,12 +12,11 @@ price change (reposts included), asking prices of comparable cars, the vehicle r
 ad's photos. Prices are in shekels and are asking prices, not sale prices. `today` is the date of the call;
 work out how far away any date is from it. You may also get notes from online research, with \
 sources: what the model costs new or 0 km now, price guides and known faults. A new or 0 km car \
-for not much more than this asking price is strong leverage; so are known faults. Cite research \
-figures with their source and date; for Yad2 prices, trust the car data.
+for not much more than this asking price is strong leverage. A known fault of the model is a \
+question (has this car had it, was it fixed), not an argument. Cite research figures with their \
+source and date; for Yad2 prices, trust the car data.
 
-The buyer gives a budget: the most they would pay for this car. They will call many sellers of \
-similar cars and only need one who wants to sell soon at a good price, so there is no need to \
-stretch for this one. Estimate a fair price, then suggest an opening offer, a target and a \
+The buyer gives a budget: the most they would pay for this car, and a firm limit. Estimate a fair price, then suggest an opening offer, a target and a \
 walk-away price, all at or below the budget: the walk-away price is the budget, or less if the car \
 isn't worth that much. Open well below the target, and aim for what a seller who wants to sell \
 soon would take. If the asking price is above the budget, the call's job is to find out whether \
@@ -29,7 +28,11 @@ comparable cars, ownership the ad hides (dealer, rental, company, more hands), d
 in the photos, a test due soon. If something is unknown, say what to ask the seller instead: questions that each ask one thing, that the \
 seller can answer on the phone, never requests to send photos or documents, and nothing that is the same for every \
 car of this model (the manufacturer's warranty, specs, standard equipment). Leverage is only what \
-argues for a lower price: never list cars priced above this one as leverage.
+argues for a lower price: never list cars priced above this one as leverage. Use only what a \
+sincere buyer would say: never fault the model itself (its safety rating, reviews, reliability or \
+resale value), since a buyer who calls it bad while asking to buy it sounds insincere. Arguments \
+are about this car and this market: its time on the market, its price history, cheaper \
+alternatives (new, 0 km or comparable cars), its test, its ownership and its visible condition.
 
 Write the summary, leverage and questions in concise English for the buyer. Write the Hebrew \
 fields as natural spoken Hebrew a polite caller would say on the phone."""

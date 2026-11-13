@@ -8,7 +8,8 @@
 
 Reads the database at BOT_DB_PATH (or DATA_DIR/bot.sqlite3) and never writes to it; briefs and
 call transcripts are saved under DATA_DIR/haggle/<token>/. Before the first brief Claude
-researches the car online (new and 0 km prices, known faults); notes go to research.md. Needs ANTHROPIC_API_KEY (or an
+researches the model online (new and 0 km prices, known faults), saved per model and year in
+DATA_DIR/haggle/research/ and reused for 30 days. Needs ANTHROPIC_API_KEY (or an
 `ant auth login` profile). HAGGLE_MODEL picks the Claude model.
 """
 
@@ -104,25 +105,19 @@ def _brief(facts: dict, args, folder) -> dict:
         saved = json.loads(path.read_text())
         if saved.get("budget") == args.budget:
             return saved
-    research = None if args.no_research else _research(facts, args, folder)
+    research = None
+    if not args.no_research:
+        print(f"Online research for {online.model_key(facts)}…", file=sys.stderr)
+        research, new = online.for_model(facts, refresh=args.refresh)
+        if not new:
+            print(f"  (reusing the research from {research['date']})", file=sys.stderr)
     print("Preparing the negotiation brief…", file=sys.stderr)
     brief = briefs.build(facts, args.budget, research=research["notes"] if research else None)
-    if research:
+    if research and new:
         brief["cost_usd"] = round(brief["cost_usd"] + research["cost_usd"], 4)
     path.write_text(json.dumps(brief, ensure_ascii=False, indent=1))
     (folder / "facts.json").write_text(json.dumps(facts, ensure_ascii=False, indent=1, default=str))
     return brief
-
-
-def _research(facts: dict, args, folder) -> dict:
-    path = folder / "research.json"
-    if path.exists() and not args.refresh:
-        return json.loads(path.read_text())
-    print("Researching the car online…", file=sys.stderr)
-    research = {"date": facts["today"], **online.run(facts)}
-    path.write_text(json.dumps(research, ensure_ascii=False, indent=1))
-    (folder / "research.md").write_text(research["notes"] + "\n")
-    return research
 
 
 def _rehearse(facts: dict, brief: dict, args, folder) -> int:

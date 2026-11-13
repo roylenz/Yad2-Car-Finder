@@ -198,13 +198,17 @@ Pi. It reads a copy of the database and never writes to it; briefs and call tran
 `HAGGLE_MODEL` picks the Claude model (default Claude Opus 5.5).
 
 - `brief` - built around your budget (`--budget`, the most you'd pay; required): first Claude
-  researches the car online (new and 0 km prices and clearance deals, published used prices, known
-  faults and recalls; notes with sources in `research.md`, about $0.40 a car, skip with
+  researches the model online (new and 0 km prices and clearance deals, published used prices, known
+  faults and recalls; about $0.40, saved per make, model and year with sources in
+  `data/haggle/research/` and reused by every ad of that model for 30 days; skip with
   `--no-research`), then works out what the car is worth and why: time on the market, every price
   drop and repost, comparable cars' prices, registry mismatches and photo findings, plus an opening
   offer, target and walk-away price (never above the budget) and what to say and ask in Hebrew.
-  Since you can call many sellers, it doesn't stretch: the point is to find one who wants to sell
-  soon at your price, and every call asks how soon the seller wants to sell
+  The budget is firm: if the seller won't come down to it the call ends politely. Every call asks
+  how soon the seller wants to sell. Arguments are about this car and the market (time listed,
+  cheaper new or 0 km deals and listings, the test, ownership, condition), never faults of the
+  model itself like its crash rating: a buyer who runs down the car they're asking to buy sounds
+  insincere
 - `rehearse` - the phone call as text: Claude calls in Hebrew, says it is an AI calling for a
   buyer, negotiates within the walk-away price, never commits to buying, and reports the outcome.
   You type the seller's side, or `--auto-seller` lets Claude play a seller with a secret lowest price

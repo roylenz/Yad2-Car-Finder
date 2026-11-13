@@ -110,7 +110,7 @@ class HaggleTests(unittest.TestCase):
         system = client.requests[0]["system"][0]["text"]
         self.assertIn("₪88,000", system)  # walk-away limit
         self.assertIn("AI assistant", system)
-        self.assertIn("calling many sellers", system)
+        self.assertIn("firm budget", system)
         self.assertIn("calling for הקונה", system)  # no HAGGLE_BUYER_NAME in the test
         self.assertNotIn("cost_usd", system)
         # The history is append-only: the second request starts with the first exchange unchanged.
@@ -141,6 +141,18 @@ class HaggleTests(unittest.TestCase):
         self.assertEqual(client.requests[1]["messages"][1]["role"], "assistant")  # resumed, not restarted
         self.assertIn("2024", client.requests[0]["messages"][0]["content"])  # model year
         self.assertGreater(result["cost_usd"], 0.03)
+
+        self.assertEqual(research.model_key(facts), "טויוטה-קורולה-2024")
+        with tempfile.TemporaryDirectory() as folder, unittest.mock.patch.dict("os.environ", {"DATA_DIR": folder}):
+            saved_client = FakeClient(_response(_text("notes")))
+            first, new = research.for_model(facts, client=saved_client)
+            again, new_again = research.for_model(facts, client=FakeClient())  # no request: reused
+            self.assertTrue(new)
+            self.assertFalse(new_again)
+            self.assertEqual(again["notes"], "notes")
+            later = {**facts, "today": "2099-01-01"}
+            _, stale = research.for_model(later, client=FakeClient(_response(_text("fresh"))))
+            self.assertTrue(stale)
 
         brief_client = FakeClient(_response(_text(json.dumps(BRIEF, ensure_ascii=False))))
         briefs.build(facts, 90000, client=brief_client, research=result["notes"])

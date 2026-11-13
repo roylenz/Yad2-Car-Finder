@@ -103,7 +103,7 @@ src/
     facts.py                 # read-only facts for one car: price history, market, registry, condition
     brief.py                 # Claude negotiation brief built around the buyer's budget (offers never above it)
     call.py                  # CallAgent (text phone call, end_call tool) and SimulatedSeller
-    research.py              # online research before the brief: new/0 km prices, used prices, known faults (web search)
+    research.py              # online research per model+year (saved, reused 30 days): new/0 km prices, used prices, known faults
     voice.py                 # real calls: ElevenLabs agent (Hebrew, Claude Sonnet, short turns, one question each) + imported Twilio number; brief as dynamic variables
     __main__.py              # CLI: list / brief / rehearse / call; output in DATA_DIR/haggle/<token>/
   common/
