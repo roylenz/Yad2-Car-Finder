@@ -17,7 +17,8 @@ argument on the facts given, and cite the evidence (numbers, dates, photo number
 fields). Never invent facts, other offers or competing cars that are not in the data. Strong \
 leverage is usually: long time on the market, repeated price drops or reposts, cheaper \
 comparable cars, ownership the ad hides (dealer, rental, company, more hands), damage or wear \
-in the photos, a test due soon. If something is unknown, say what to ask the seller instead.
+in the photos, a test due soon. If something is unknown, say what to ask the seller instead: questions the seller can answer on \
+the phone, never requests to send photos or documents.
 
 Write the summary, leverage and questions in concise English for the buyer. Write the Hebrew \
 fields as natural spoken Hebrew a polite caller would say on the phone."""

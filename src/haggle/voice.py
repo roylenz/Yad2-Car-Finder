@@ -14,7 +14,7 @@ from pathlib import Path
 
 import httpx
 
-from haggle.call import AGENT_SYSTEM, essentials
+from haggle.call import AGENT_SYSTEM, buyer_name, essentials
 from storage.db import data_dir
 
 API = "https://api.elevenlabs.io/v1/convai"
@@ -25,7 +25,7 @@ TTS_MODEL = "eleven_v4_turbo"  # lists Hebrew; flash v2.5 and multilingual v2 do
 DEFAULT_VOICE = "C39IE0ECRPwBxFNsQELk"  # "Hebrew Assistant"
 
 # Short: who is calling, that it is recorded, and straight to the first question.
-FIRST_MESSAGE = "היי, אני עוזר בינה מלאכותית של קונה, והשיחה מוקלטת. לגבי ה{{car_title}} ביד2 – המחיר גמיש?"
+FIRST_MESSAGE = "היי, אני עוזר בינה מלאכותית של {{buyer}}, והשיחה מוקלטת. לגבי ה{{car_title}} ביד2 – המחיר גמיש?"
 
 PHONE_NOTES = """
 
@@ -87,7 +87,7 @@ def _save_state(state: dict) -> None:
 
 
 def agent_config(voice_id: str = DEFAULT_VOICE) -> dict:
-    prompt = AGENT_SYSTEM.format(walk_away="{{walk_away}}", brief="{{brief}}", facts="{{facts}}") + PHONE_NOTES
+    prompt = AGENT_SYSTEM.format(buyer="{{buyer}}", walk_away="{{walk_away}}", brief="{{brief}}", facts="{{facts}}") + PHONE_NOTES
     return {
         "name": AGENT_NAME,
         "conversation_config": {
@@ -98,7 +98,7 @@ def agent_config(voice_id: str = DEFAULT_VOICE) -> dict:
                 "language": "he",
                 "dynamic_variables": {
                     "dynamic_variable_placeholders": {
-                        "car_title": "הרכב", "walk_away": "₪0", "brief": "{}", "facts": "{}",
+                        "car_title": "הרכב", "buyer": "הקונה", "walk_away": "₪0", "brief": "{}", "facts": "{}",
                     }
                 },
                 "prompt": {
@@ -169,6 +169,7 @@ def dynamic_variables(facts: dict, brief: dict) -> dict:
     clean = {key: value for key, value in brief.items() if key not in ("model", "cost_usd")}
     return {
         "car_title": ad["title"],
+        "buyer": buyer_name(),
         "walk_away": f"₪{brief['walk_away_price']:,}",
         "brief": json.dumps(clean, ensure_ascii=False),
         "facts": json.dumps(essentials(facts), ensure_ascii=False, default=str),

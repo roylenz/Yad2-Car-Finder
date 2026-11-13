@@ -5,13 +5,14 @@ what the caller says next, and the call ends when Claude reports the outcome wit
 """
 
 import json
+import os
 import time
 from dataclasses import dataclass, field
 
 from haggle import claude
 
 AGENT_SYSTEM = """You are an AI assistant phoning a private seller in Israel about the used car \
-they advertised on Yad2, on behalf of a buyer. Speak natural, casual, spoken Hebrew. Say only \
+they advertised on Yad2, on behalf of {buyer}, who wants to buy it. Speak natural, casual, spoken Hebrew. Say only \
 what the caller says aloud, with no stage directions or notes.
 
 Be brief and get to the point: this is a phone call, and the seller's time matters.
@@ -20,14 +21,17 @@ Be brief and get to the point: this is a phone call, and the seller's time matte
 not even with "and".
 - Don't explain why you ask, and don't announce what you are about to do ("I have a few questions").
 
-Introduce yourself in one short sentence: an AI assistant calling for a buyer. Never pretend \
-to be human; if asked, confirm you are an AI. If the seller does not want to talk to an AI, \
-apologise, say the buyer may call personally, and end the call.
+Introduce yourself in one short sentence: an AI assistant calling for {buyer}. Speak of the \
+buyer as {buyer}, never as "the buyer" or "a buyer". Never pretend to be human; if asked, confirm \
+you are an AI. If the seller does not want to talk to an AI, apologise, say {buyer} may call \
+personally, and end the call.
 
 The order of the call:
 1. Is the price negotiable? (If the car is sold, thank them and end the call.)
-2. Is there anything the buyer should know about the car: damage, accidents, faults?
-3. At most one or two of the brief's questions, only those that matter for the price.
+2. Is there anything {buyer} should know about the car: damage, accidents, faults?
+3. At most one or two of the brief's questions, only those that matter for the price and that \
+the seller can answer on the spot. Never ask the seller to send anything (photos, documents, \
+reports): that needs a phone number you can't give, and {buyer} can ask for it later.
 4. Negotiate: start at the opening offer and work towards the target, using one piece of \
 leverage from the brief at a time, in a few words. Raise your offer in small steps and only when \
 the seller moves too. When the seller names a lowest price, try once for a little less; then \
@@ -35,11 +39,11 @@ accept it if it is within the limit, or thank them and end the call if not.
 
 Hard limits:
 - Never offer or agree to more than the walk-away price ({walk_away}).
-- Never commit to buying, to a deposit, a payment, or a meeting time. Say the buyer will call \
+- Never commit to buying, to a deposit, a payment, or a meeting time. Say {buyer} will call \
 back to confirm and arrange a viewing.
 - Use only facts from the brief and the car data. Never invent other offers, other cars, a \
 deadline or anything else.
-- Do not share anything about the buyer (name, phone, address, finances).
+- Share nothing about {buyer} beyond the first name: no phone number, address or finances.
 - If the seller is rude, busy or clearly asks to stop, thank them and end the call.
 
 When the conversation is over, say a short goodbye and call end_call with the outcome.
@@ -114,6 +118,14 @@ def essentials(facts: dict) -> dict:
     }
 
 
+DEFAULT_BUYER = "הקונה"
+
+
+def buyer_name() -> str:
+    """The buyer's first name, as the caller says it (HAGGLE_BUYER_NAME); "the buyer" when unset."""
+    return os.getenv("HAGGLE_BUYER_NAME", "").strip() or DEFAULT_BUYER
+
+
 @dataclass
 class Turn:
     speaker: str  # "caller" or "seller"
@@ -135,6 +147,7 @@ class CallAgent:
         self.client = self.client or claude.client()
         brief = {key: value for key, value in self.brief.items() if key not in ("model", "cost_usd")}
         self.system = AGENT_SYSTEM.format(
+            buyer=buyer_name(),
             walk_away=f"₪{self.brief['walk_away_price']:,}",
             brief=json.dumps(brief, ensure_ascii=False, indent=1),
             facts=json.dumps(essentials(self.facts), ensure_ascii=False, indent=1, default=str),

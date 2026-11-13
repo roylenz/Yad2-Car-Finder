@@ -2,6 +2,7 @@ import datetime
 import json
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -89,6 +90,7 @@ class HaggleTests(unittest.TestCase):
         self.assertEqual(request["output_config"]["format"]["schema"], briefs.SCHEMA)
         self.assertIn("Fair price", briefs.as_text(facts, brief))
 
+    @unittest.mock.patch.dict("os.environ", {"HAGGLE_BUYER_NAME": ""})
     def test_call_runs_until_the_caller_reports_the_outcome(self):
         facts = car_facts.gather(self.state.engine, "target01")
         outcome = {
@@ -108,6 +110,7 @@ class HaggleTests(unittest.TestCase):
         system = client.requests[0]["system"][0]["text"]
         self.assertIn("₪88,000", system)  # walk-away limit
         self.assertIn("AI assistant", system)
+        self.assertIn("calling for הקונה", system)  # no HAGGLE_BUYER_NAME in the test
         self.assertNotIn("cost_usd", system)
         # The history is append-only: the second request starts with the first exchange unchanged.
         self.assertEqual(len(client.requests[1]["messages"]), 3)
@@ -146,6 +149,8 @@ class VoiceTests(unittest.TestCase):
         self.assertIn("Never commit to buying", prompt)
         self.assertIn("ONE question per turn", prompt)
         self.assertIn("עוד הפעם", prompt)
+        self.assertIn("{{buyer}}", agent["first_message"])
+        self.assertIn("Never ask the seller to send anything", prompt)
         self.assertIn("המחיר גמיש", agent["first_message"])
         self.assertTrue(config["conversation_config"]["turn"]["speculative_turn"])
         self.assertTrue(config["conversation_config"]["vad"]["background_voice_detection"])
@@ -153,6 +158,7 @@ class VoiceTests(unittest.TestCase):
         self.assertEqual(config["conversation_config"]["tts"]["model_id"], "eleven_v4_turbo")
         self.assertIn("seller_lowest_price", config["platform_settings"]["data_collection"])
 
+    @unittest.mock.patch.dict("os.environ", {"HAGGLE_BUYER_NAME": "רועי"})
     def test_dynamic_variables_and_outcome(self):
         from haggle import voice
 
@@ -162,6 +168,7 @@ class VoiceTests(unittest.TestCase):
                  "condition": None}
         variables = voice.dynamic_variables(facts, {**BRIEF, "model": "x", "cost_usd": 1})
         self.assertEqual(variables["car_title"], "דונגפנג בוקס")
+        self.assertEqual(variables["buyer"], "רועי")
         self.assertEqual(variables["walk_away"], "₪88,000")
         self.assertNotIn("cost_usd", variables["brief"])
         sent = json.loads(variables["facts"])
