@@ -45,7 +45,8 @@ class DashboardTests(unittest.TestCase):
         self.sha, key = asyncio.run(self.store.save(buffer.getvalue(), ".jpg"))
         self.state.ads.photo_stored(1, self.sha, key, len(buffer.getvalue()))
 
-        patcher = patch.dict("os.environ", {"DATA_DIR": str(directory)})
+        # A developer's .env may set the key; these tests expect the Claude check to be off.
+        patcher = patch.dict("os.environ", {"DATA_DIR": str(directory), "ANTHROPIC_API_KEY": ""})
         patcher.start()
         self.addCleanup(patcher.stop)
         self.client = TestClient(create_app(self.state.engine, self.store, auth.NoAuth()))
