@@ -13,6 +13,7 @@ _VOLATILE_ATTRIBUTES = {
     "updated_at", "rebounced_at", "ends_at", "price_before", "tags",
     "km_since_last_test",  # follows km, which is tracked
     "specification",  # tracked through equipment, airbags, safety_points, pollution_level
+    "final_score",  # Yad2's feed ranking score; drifts on every re-rank
 }
 _TRACKED_FIELDS = ("price", "km", "hand", "year", "title", "sub_model")
 

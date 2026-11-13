@@ -236,6 +236,37 @@ class TrackerTests(TempStateTestCase):
             history = db.execute(select(ad_snapshots.c.changes)).scalars().all()
         self.assertEqual(history, [None])
 
+    def test_ranking_score_is_not_a_change_and_old_entries_are_removed(self):
+        tracker = AdTracker(self.state.ads)
+        self.search, _ = self.state.add_search(1, SEARCH, 10)
+        for score, price in ((0.31, 90000), (0.30, 90000), (0.29, 85000)):
+            listing = CarListing(URL, "Limo", price, attributes={"final_score": score})
+            tracker.apply(1, self.search.id, ScanOutput([listing]))
+        with self.state.engine.connect() as db:
+            history = db.execute(select(ad_snapshots.c.changes).order_by(ad_snapshots.c.id)).scalars().all()
+        self.assertEqual(history, [None, {"price": [90000, 85000]}])
+
+        # Entries logged before the score was ignored are removed by migration 0008.
+        from alembic import command
+        from alembic.config import Config
+
+        from storage.db import _MIGRATIONS_DIR
+
+        with self.state.engine.begin() as db:
+            db.execute(ad_snapshots.insert(), [
+                {"token": "6rg1e7dp", "observed_at": datetime.datetime(2026, 11, 2), "changes": {"final_score": [0.3, 0.2]}},
+                {"token": "6rg1e7dp", "observed_at": datetime.datetime(2026, 11, 3),
+                 "changes": {"final_score": [0.2, 0.1], "km": [1000, 2000]}},
+            ])
+        config = Config()
+        config.set_main_option("script_location", str(_MIGRATIONS_DIR))
+        config.attributes["engine"] = self.state.engine
+        command.downgrade(config, "0007")
+        command.upgrade(config, "head")
+        with self.state.engine.connect() as db:
+            history = db.execute(select(ad_snapshots.c.changes).order_by(ad_snapshots.c.id)).scalars().all()
+        self.assertEqual(history, [None, {"price": [90000, 85000]}, {"km": [1000, 2000]}])
+
     def test_big_drop_badge_does_not_alert(self):
         # 200,000 -> 90,000: the badge (110,000) is above the new price and looked like a drop.
         tracker = AdTracker(self.state.ads)
