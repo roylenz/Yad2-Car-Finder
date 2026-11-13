@@ -139,8 +139,8 @@ enabled processors run in the background. Background work pauses while a scan ru
 browser has the Pi's CPU (Yad2's bot check fails on a slow browser).
 
 Seller numbers: when a scan reads a new ad it also opens the ad in a second tab, presses
-"הצגת מספר טלפון" and saves the number shown (Yad2's forwarding number) with the ad; the
-dashboard's ad page shows it. Ads that have no number yet are opened in the background between
+"הצגת מספר טלפון" and saves the seller's name and the number shown (Yad2's forwarding number)
+with the ad; the dashboard's ad page shows them. Ads missing the number or name are opened in the background between
 scans, 15 per round with a pause between ads, each in a fresh tab (the button only answers on a
 tab's first ad page), until each has one: three tries per ad, none more for dealer and leasing
 ads that have a contact form instead, and a bot check ends the round.
@@ -234,7 +234,7 @@ PYTHONPATH=src $RUN python -m haggle rehearse <ad ID> --budget 80000 --auto-sell
 `call` makes a real phone call: an ElevenLabs agent speaks Hebrew (voice "Hebrew Assistant",
 `eleven_v4_turbo`), thinks with Claude (`HAGGLE_VOICE_LLM`, default Claude Sonnet 5.5, which starts
 answering sooner than Opus) and dials through the Twilio number. Its short opening line, which can't
-be interrupted, says it is an AI calling for you (your first name from `HAGGLE_BUYER_NAME`, e.g.
+be interrupted, greets the seller by first name when the ad's name gives one, says it is an AI calling for you (your first name from `HAGGLE_BUYER_NAME`, e.g.
 in `.env`; "הקונה" when unset) and that the call is recorded, and asks whether the price is
 negotiable. Then it asks whether there's anything to know about the car (damage, faults), at most
 one or two of the brief's questions (never a request to send photos or documents, nor anything
