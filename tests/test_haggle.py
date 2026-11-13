@@ -147,6 +147,7 @@ class VoiceTests(unittest.TestCase):
         self.assertIn("ONE question per turn", prompt)
         self.assertIn("המחיר גמיש", agent["first_message"])
         self.assertTrue(config["conversation_config"]["turn"]["speculative_turn"])
+        self.assertTrue(config["conversation_config"]["vad"]["background_voice_detection"])
         self.assertIn("end_call", agent["prompt"]["built_in_tools"])
         self.assertEqual(config["conversation_config"]["tts"]["model_id"], "eleven_v4_turbo")
         self.assertIn("seller_lowest_price", config["platform_settings"]["data_collection"])

@@ -114,6 +114,9 @@ def agent_config(voice_id: str = DEFAULT_VOICE) -> dict:
             },
             # Answer as soon as the seller stops: start thinking during the pause, before the turn is certain.
             "turn": {"turn_eagerness": "eager", "speculative_turn": True},
+            # Sellers often talk to someone in the room: without this their chatter keeps the
+            # seller's turn open and the caller goes silent (36 seconds on one test call).
+            "vad": {"background_voice_detection": True},
             "tts": {"model_id": TTS_MODEL, "voice_id": voice_id},
             "conversation": {"max_duration_seconds": 480},
         },
