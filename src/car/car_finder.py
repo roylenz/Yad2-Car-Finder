@@ -18,6 +18,27 @@ from car.search_url import BASE_URL, price_range, split_price, with_price
 from common.exceptions import CustomException, ErrorCode
 from common.logger import logger
 
+BROWSER_START_ATTEMPTS = 3
+BROWSER_RETRY_SECONDS = 3
+
+
+async def stop_unconnected_browsers() -> None:
+    """End the Chrome processes nodriver started but never connected to (a failed start)."""
+    from nodriver.core import util
+
+    for browser in list(util.get_registered_instances()):
+        if getattr(browser, "connection", None) is not None:
+            continue
+        process = getattr(browser, "_process", None)
+        if process is not None and process.returncode is None:
+            process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), 5)
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+        util.get_registered_instances().discard(browser)
+
 
 class PageLoadError(CustomException):
     """A Yad2 page did not load. `kind`: "bot_check", "network_error" or "timeout"."""
@@ -64,23 +85,32 @@ class Yad2CarFinder:
 
     @staticmethod
     async def _start_browser(chrome_arguments: list[str]) -> uc.Browser:
-        try:
-            headless = os.getenv("CHROME_HEADLESS", "false").lower() in ("1", "true", "yes")
-            browser_path = os.getenv("CHROME_PATH") or None
-            no_sandbox = os.getenv("CHROME_NO_SANDBOX", "false").lower() in (
-                "1", "true", "yes"
-            )
-            return await uc.start(
-                browser_args=chrome_arguments,
-                browser_executable_path=browser_path,
-                headless=headless,
-                sandbox=not no_sandbox,
-            )
-        except Exception as e:
-            raise CustomException(
-                f"Failed to start browser: {e}",
-                ErrorCode.BROWSER_START_FAILED,
-            ) from e
+        """Start Chrome, trying again when it is slow to come up.
+
+        nodriver gives Chrome under 3 seconds to answer, which a Raspberry Pi sometimes needs more
+        for; it then raises "Failed to connect to browser" (its hint about running as root is a red
+        herring) and leaves that Chrome running. Such a Chrome is stopped before the next try.
+        """
+        headless = os.getenv("CHROME_HEADLESS", "false").lower() in ("1", "true", "yes")
+        browser_path = os.getenv("CHROME_PATH") or None
+        no_sandbox = os.getenv("CHROME_NO_SANDBOX", "false").lower() in ("1", "true", "yes")
+        for attempt in range(1, BROWSER_START_ATTEMPTS + 1):
+            try:
+                return await uc.start(
+                    browser_args=chrome_arguments,
+                    browser_executable_path=browser_path,
+                    headless=headless,
+                    sandbox=not no_sandbox,
+                )
+            except Exception as e:
+                await stop_unconnected_browsers()
+                if attempt == BROWSER_START_ATTEMPTS:
+                    raise CustomException(
+                        f"Failed to start browser: {e}",
+                        ErrorCode.BROWSER_START_FAILED,
+                    ) from e
+                logger.warning("Chrome did not answer in time; starting it again", attempt=attempt)
+                await asyncio.sleep(BROWSER_RETRY_SECONDS)
 
     @staticmethod
     async def _query_elements(tab: uc.Tab, css_selector: str) -> list:

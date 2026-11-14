@@ -519,3 +519,61 @@ class SellerPhoneTests(TempStateTestCase):
         with self.state.engine.begin() as db:
             db.execute(ads.update().where(ads.c.token == "phone001").values(seller_name=None, seller_phone_attempts=0))
         self.assertEqual([t for t, _ in self.state.ads.ads_without_phone()], ["phone001"])
+
+
+class BrowserStartTests(unittest.TestCase):
+    """nodriver gives Chrome under 3 seconds to answer; a slow start on the Pi is tried again."""
+
+    def setUp(self):
+        from unittest.mock import patch
+
+        from car import car_finder
+
+        patcher = patch.object(car_finder, "BROWSER_RETRY_SECONDS", 0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_a_slow_start_is_tried_again_and_the_unanswered_chrome_stopped(self):
+        from unittest.mock import AsyncMock, patch
+
+        from car import car_finder
+
+        browser = object()
+        start = AsyncMock(side_effect=[Exception("Failed to connect to browser"), browser])
+        with patch.object(car_finder.uc, "start", start), \
+                patch.object(car_finder, "stop_unconnected_browsers", AsyncMock()) as stop:
+            self.assertIs(asyncio.run(Yad2CarFinder._start_browser([])), browser)
+        self.assertEqual(start.await_count, 2)
+        stop.assert_awaited_once()
+
+    def test_gives_up_after_three_tries(self):
+        from unittest.mock import AsyncMock, patch
+
+        from car import car_finder
+        from common.exceptions import CustomException
+
+        start = AsyncMock(side_effect=Exception("Failed to connect to browser"))
+        with patch.object(car_finder.uc, "start", start), \
+                patch.object(car_finder, "stop_unconnected_browsers", AsyncMock()):
+            with self.assertRaises(CustomException):
+                asyncio.run(Yad2CarFinder._start_browser([]))
+        self.assertEqual(start.await_count, car_finder.BROWSER_START_ATTEMPTS)
+
+    def test_stops_only_browsers_it_never_connected_to(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from car import car_finder
+        from nodriver.core import util
+
+        def fake(connected):
+            browser = MagicMock()
+            browser.connection = object() if connected else None
+            browser._process.returncode = None
+            browser._process.wait = AsyncMock(return_value=0)
+            return browser
+
+        stuck, working = fake(False), fake(True)
+        with patch.object(util, "get_registered_instances", return_value={stuck, working}):
+            asyncio.run(car_finder.stop_unconnected_browsers())
+        stuck._process.terminate.assert_called_once()
+        working._process.terminate.assert_not_called()

@@ -21,6 +21,7 @@
 ## Async Patterns
 - **All** I/O operations must be async (browser automation, file writes, Telegram API)
 - Use `nodriver` for browser automation (not Selenium)
+- Start Chrome through `Yad2CarFinder._start_browser`: nodriver waits under 3 s for Chrome to answer and the Pi is sometimes slower, so it tries 3 times and stops the unanswered Chrome nodriver leaves running (`stop_unconnected_browsers`)
 
 - Use `python-telegram-bot` v22+ for Telegram bot (natively async)
 - Use `asyncio.sleep()` instead of `time.sleep()`
