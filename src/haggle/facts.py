@@ -39,6 +39,7 @@ def gather(engine: Engine, token: str, now: datetime.datetime | None = None) -> 
             "seller_type": attributes.get("seller_type"),
             "city": attributes.get("city") or attributes.get("area"),
             "ownership_in_ad": attributes.get("ownership"),
+            "original_owner_in_ad": attributes.get("original_owner"),
             "on_road_since": attributes.get("on_road_since"),
             "last_test_date": attributes.get("last_test_date"),
             "test_valid_until": attributes.get("test_valid_until"),
@@ -134,6 +135,7 @@ def _registry(ad, result: dict | None) -> dict:
         summary = plates.ownership_summary(ad.ownership)
         out["ownership"] = {
             "owners_not_counting_dealers": summary["hands"],
+            "first_owner_type": summary["first_owner"],
             "last_owner_type": summary["last_owner"],
             "with_dealer_now": summary["with_dealer"],
             "months_with_dealer": summary["dealer_months"],

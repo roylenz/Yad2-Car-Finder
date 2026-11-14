@@ -134,6 +134,29 @@ class PlateLogicTests(unittest.TestCase):
         })
         self.assertFalse(plates.compare(ad, {**record, "kinuy_mishari": "JUNEYAO JY AIR", "tozeret_nm": "ג'וניאו"})["same_car"])
 
+    def test_ex_lease_car_sold_as_first_private_hand(self):
+        # x9i3q75i: advertised as hand 1, private from new; the registry has a lease first.
+        ad = CarListing(
+            "https://www.yad2.co.il/vehicles/item/x9i3q75i", "ג׳יי.איי.סי E-JS4", 128000, 2500, year=2025,
+            hand=1, manufacturer="ג׳יי.איי.סי", model="E-JS4",
+            attributes={"ownership": "פרטית", "original_owner": "פרטית", "on_road_since": "2025-10"},
+        )
+        record = {"tozeret_nm": "ג'אק סין", "kinuy_mishari": "JAC 40", "shnat_yitzur": 2025,
+                  "moed_aliya_lakvish": "2025-10", "baalut": "פרטי"}
+        history = [{"month": "2025-10", "owner": "lease"}, {"month": "2026-01", "owner": "dealer"},
+                   {"month": "2026-01", "owner": "dealer"}, {"month": "2026-01", "owner": "private"}]
+        comparison = plates.compare(ad, record, history)
+        self.assertEqual(comparison["discrepancies"], [
+            "Ad says hand 1, registry shows 2 owners (not counting dealers): lease from 2025-10, private from 2026-01",
+            "Ad says the original owner was private, registry's first owner was lease (from 2025-10)",
+        ])
+        rows = {row["field"]: row for row in comparison["fields"]}
+        self.assertTrue(rows["Hand"]["differs"])
+        self.assertEqual(rows["Hand"]["registry"], "2 (lease from 2025-10, private from 2026-01)")
+        self.assertTrue(rows["Original owner"]["differs"])
+        self.assertEqual(rows["Original owner"]["registry"], "Lease")
+        self.assertFalse(rows["Ownership"]["differs"])  # the current owner is private, as the ad says
+
     def test_compare_flags_differences_from_the_ad(self):
         ad = limo(FIRST, year=2025, attributes={
             "seller_type": "private", "on_road_since": "2024-03", "last_test_date": "2026-01-01",

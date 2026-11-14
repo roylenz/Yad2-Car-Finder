@@ -21,7 +21,9 @@ walk-away price, all at or below the budget: the walk-away price is the budget, 
 isn't worth that much. Open well below the target, and aim for what a seller who wants to sell \
 soon would take. If the asking price is above the budget, the call's job is to find out whether \
 the seller would come down to it. Always include a question about how soon the seller wants to \
-sell. Base every argument on the facts given, and cite the evidence (numbers, dates, photo numbers, registry \
+sell. When the registry contradicts the ad about the car's history (more hands than the ad \
+says, or a lease, rental or company owner where the ad says private), that is the strongest \
+leverage: make it the first argument, with the months from the registry. Base every argument on the facts given, and cite the evidence (numbers, dates, photo numbers, registry \
 fields). Never invent facts, other offers or competing cars that are not in the data. Strong \
 leverage is usually: long time on the market, repeated price drops or reposts, cheaper \
 comparable cars, ownership the ad hides (dealer, rental, company, more hands), damage or wear \

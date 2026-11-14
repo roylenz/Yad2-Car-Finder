@@ -18,7 +18,7 @@ from storage.schema import ads
 
 class PlateRegistryProcessor(Processor):
     name = "plate_registry"
-    version = "3"  # 3: rejected plates keep their registry record and the side-by-side comparison
+    version = "4"  # 3: rejected plates keep their registry record; 4: hands and original owner compared
     target = "ad"
     requires = ("plate_reader",)
 

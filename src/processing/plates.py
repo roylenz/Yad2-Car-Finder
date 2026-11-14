@@ -161,6 +161,9 @@ def ownership_summary(history: list[dict], today: datetime.date | None = None) -
     return {
         "hands": len(owners),
         "agency_first": agency,
+        "first_owner": owners[0]["owner"] if owners else None,
+        "first_owner_since": owners[0]["month"] if owners else None,
+        "owners": [(entry["owner"], entry["month"]) for entry in owners],
         "last_owner": owners[-1]["owner"] if owners else None,
         "last_owner_since": owners[-1]["month"] if owners else None,
         "with_dealer": bool(dealers),
@@ -248,7 +251,15 @@ def compare(listing: CarListing, record: dict, history: list[dict] | None = None
         if listing.hand and summary["hands"] and listing.hand != summary["hands"]:
             discrepancies.append(
                 f"Ad says hand {listing.hand}, registry shows {summary['hands']} "
-                f"owner{'s' if summary['hands'] != 1 else ''} (not counting dealers)"
+                f"owner{'s' if summary['hands'] != 1 else ''} (not counting dealers): {_owner_list(summary)}"
+            )
+        ad_original = owner_type(attributes.get("original_owner"))
+        first_owner = summary["first_owner"]
+        if ad_original and first_owner and ad_original != first_owner and DEALER not in (ad_original, first_owner):
+            discrepancies.append(
+                f"Ad says the original owner was {OWNER_LABELS.get(ad_original, ad_original).lower()}, "
+                f"registry's first owner was {OWNER_LABELS.get(first_owner, first_owner).lower()} "
+                f"(from {summary['first_owner_since']})"
             )
         if last_owner == "rental":
             discrepancies.append("Was a rental car")
@@ -268,8 +279,15 @@ def compare(listing: CarListing, record: dict, history: list[dict] | None = None
         "model_matches": model_matches,
         "make_matches": make_matches,
         "discrepancies": discrepancies,
-        "fields": side_by_side(listing, record, make_matches, model_matches),
+        "fields": side_by_side(listing, record, make_matches, model_matches, summary),
     }
+
+
+def _owner_list(summary: dict) -> str:
+    """"lease from 2025-10, private from 2026-01"."""
+    return ", ".join(
+        f"{OWNER_LABELS.get(owner, owner).lower()} from {month}" for owner, month in summary["owners"]
+    )
 
 
 def _shares_word(first: str | None, second: str | None) -> bool:
@@ -278,7 +296,9 @@ def _shares_word(first: str | None, second: str | None) -> bool:
     return bool(words(first) & words(second))
 
 
-def side_by_side(listing: CarListing, record: dict, make_matches: bool, model_matches: bool) -> list[dict]:
+def side_by_side(
+    listing: CarListing, record: dict, make_matches: bool, model_matches: bool, summary: dict | None = None
+) -> list[dict]:
     """The ad and the registry record field by field, for a person to judge: each row is
     {"field", "ad", "registry", "differs"}; "differs" is None when either side is unknown."""
     attributes = listing.attributes or {}
@@ -299,6 +319,14 @@ def side_by_side(listing: CarListing, record: dict, make_matches: bool, model_ma
         ("Ownership", attributes.get("ownership"), record.get("baalut"),
          ad_owner != registry_owner and DEALER not in (ad_owner, registry_owner)
          if ad_owner and registry_owner else None),
+        *((
+            ("Hand", listing.hand, f"{summary['hands']} ({_owner_list(summary)})",
+             listing.hand != summary["hands"] if listing.hand and summary["hands"] else None),
+            ("Original owner", attributes.get("original_owner"),
+             OWNER_LABELS.get(summary["first_owner"], summary["first_owner"]) if summary["first_owner"] else None,
+             owner_type(attributes.get("original_owner")) != summary["first_owner"]
+             if owner_type(attributes.get("original_owner")) and summary["first_owner"] else None),
+        ) if summary else ()),
         ("Fuel", attributes.get("engine_type"), record.get("sug_delek_nm"),
          not _shares_word(attributes.get("engine_type"), record.get("sug_delek_nm"))),
         ("Colour", attributes.get("color"), record.get("tzeva_rechev"),
