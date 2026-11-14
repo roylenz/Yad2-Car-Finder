@@ -34,6 +34,17 @@
   .viewer .close { right: 16px; top: 16px; font-size: 22px; }
   .viewer .count { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); color: #ddd; font-size: 13px; background: rgb(0 0 0 / 0.5); padding: 2px 10px; border-radius: 999px; }
   @media (max-width: 640px) { .viewer .prev, .viewer .next { display: none; } }
+  table.versus { width: 100%; margin-top: 8px; font-size: 13px; }
+  table.versus th, table.versus td { padding: 5px 8px; }
+  table.versus thead th { color: var(--text-secondary); font-weight: 500; }
+  table.versus tbody th { color: var(--text-secondary); font-weight: 500; white-space: nowrap; }
+  table.versus tr.differs { background: color-mix(in srgb, var(--critical) 14%, transparent); }
+  table.versus tr.differs th, table.versus tr.differs td { color: var(--critical); font-weight: 600; }
+  table.versus tr.differs th::before { content: "≠ "; }
+  table.versus tr.unknown td { color: var(--text-muted); }
+  .rejected { margin-top: 14px; }
+  .rejected + .rejected { border-top: 1px solid var(--grid); padding-top: 14px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .legend-row { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-bottom: 8px; color: var(--text-secondary); font-size: 13px; }
   .legend-row .key { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
   .legend-row .key.this { background: var(--text-primary); transform: rotate(45deg); border-radius: 1px; }
@@ -42,6 +53,20 @@
 </style>
 {% endblock %}
 {% block content %}
+{% macro side_by_side(rows) %}
+<table class="versus">
+  <thead><tr><th></th><th>Ad</th><th>Registry</th></tr></thead>
+  <tbody>
+  {% for row in rows %}
+    <tr class="{{ 'differs' if row.differs else ('unknown' if row.differs is none else '') }}">
+      <th scope="row">{{ row.field }}{% if row.differs %} <span class="sr-only">(differs)</span>{% endif %}</th>
+      <td><bdi>{{ row.ad if row.ad not in (none, "") else "—" }}</bdi></td>
+      <td><bdi>{{ row.registry if row.registry not in (none, "") else "—" }}</bdi></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endmacro %}
 <h1><bdi>{{ ad.title }}</bdi> {% if ad.year %}<span class="muted">{{ ad.year }}</span>{% endif %}</h1>
 <p class="secondary">
   <bdi dir="rtl">{{ ad.sub_model or "" }}</bdi>
@@ -178,6 +203,10 @@
         <h3 style="font-size:14px; margin:14px 0 6px">Ad vs registry</h3>
         <ul class="findings">{% for item in plate.discrepancies %}<li class="impact-medium">{{ item }}</li>{% endfor %}</ul>
         {% endif %}
+        {% if plate.fields %}
+        <h3 style="font-size:14px; margin:14px 0 6px">Side by side</h3>
+        {{ side_by_side(plate.fields) }}
+        {% endif %}
         {% if ownership %}
         <h3 style="font-size:14px; margin:14px 0 6px">Owners <span class="muted">(registry, by month)</span></h3>
         <p style="margin:0 0 6px">
@@ -201,11 +230,19 @@
         </dl>
         {% endif %}
       {% elif plate %}
-        <p class="muted" style="margin:0">
-          {% if plate.status == "mismatch" %}A plate was read, but the registry lists it as a different car, so it was not kept.
+        <p class="muted" style="margin:0 0 8px">
+          {% if plate.status == "mismatch" %}A plate was read, but the registry lists it as a different car, so it was not kept. Highlighted rows are where the registry's car differs from the ad.
           {% elif plate.photos_with_plate %}A plate shows in {{ plate.photos_with_plate }} photo(s) but could not be read reliably (blurred, covered or too small).
           {% else %}No licence plate visible in the photos.{% endif %}
         </p>
+        {% for rejected in plate.rejected or [] %}
+        <div class="rejected">
+          <span class="plate">{{ rejected.plate | plate }}</span>
+          <span class="badge removed">Registry: <bdi>{{ rejected.registry_model }}</bdi>{% if rejected.year %} {{ rejected.year }}{% endif %}</span>
+          {% if rejected.fields %}{{ side_by_side(rejected.fields) }}
+          {% else %}<p class="muted" style="margin:8px 0 0">The full record will show after the next registry check.</p>{% endif %}
+        </div>
+        {% endfor %}
       {% else %}
         <p class="muted" style="margin:0">Not processed yet. Plates are read in the background after photos download.</p>
       {% endif %}

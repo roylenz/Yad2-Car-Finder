@@ -115,6 +115,25 @@ class PlateLogicTests(unittest.TestCase):
         )
         self.assertEqual(votes, [("51111503", 1.98), ("51111603", 0.6)])
 
+    def test_jac_is_the_same_make_under_its_registry_name(self):
+        # Yad2 spells JAC letter by letter; the registry calls the E-JS4 "JAC 40".
+        ad = CarListing(
+            "https://www.yad2.co.il/vehicles/item/x9i3q75i", "ג׳יי.איי.סי E-JS4", 128000, 2500, year=2025,
+            manufacturer="ג׳יי.איי.סי", model="E-JS4", sub_model="Flagship חשמלי אוט׳ (190 כ״ס)",
+            attributes={"on_road_since": "2025-10", "engine_type": "חשמלי", "color": "לבן", "ownership": "פרטית"},
+        )
+        record = {"tozeret_nm": "ג'אק סין", "kinuy_mishari": "JAC 40", "ramat_gimur": "FLAGSHIP",
+                  "shnat_yitzur": 2025, "moed_aliya_lakvish": "2025-10", "baalut": "פרטי",
+                  "tzeva_rechev": "שנהב לבן", "sug_delek_nm": "חשמל"}
+        comparison = plates.compare(ad, record)
+        self.assertTrue(comparison["same_car"])
+        differs = {row["field"]: row["differs"] for row in comparison["fields"]}
+        self.assertEqual(differs, {
+            "Make": False, "Model": True, "Trim": False, "Year": False, "On the road since": False,
+            "Last test": None, "Ownership": False, "Fuel": False, "Colour": False,
+        })
+        self.assertFalse(plates.compare(ad, {**record, "kinuy_mishari": "JUNEYAO JY AIR", "tozeret_nm": "ג'וניאו"})["same_car"])
+
     def test_compare_flags_differences_from_the_ad(self):
         ad = limo(FIRST, year=2025, attributes={
             "seller_type": "private", "on_road_since": "2024-03", "last_test_date": "2026-01-01",
@@ -250,6 +269,17 @@ class PlatePipelineTests(StoreTestCase):
             ).scalar_one()
         self.assertEqual(tuple(row), (None, "mismatch"))
         self.assertEqual(result["rejected"][0]["registry_model"], "MICRA")
+        # The rejected car is kept whole and shown next to the ad, the differences highlighted.
+        rejected = result["rejected"][0]
+        self.assertEqual(rejected["registry"]["kinuy_mishari"], "MICRA")
+        differs = {row["field"]: row["differs"] for row in rejected["fields"]}
+        self.assertEqual((differs["Make"], differs["Model"], differs["Year"]), (True, True, True))
+        self.assertFalse(differs["On the road since"])
+        page = TestClient(create_app(self.state.engine, self.store, auth.NoAuth())).get("/ads/limo0001").text
+        self.assertIn("33-322-33", page)
+        self.assertIn("Registry: <bdi>MICRA</bdi> 2016", page)
+        self.assertEqual(page.count('<tr class="differs">'), 3)
+        self.assertIn("ניסאן", page)
 
     def test_registry_needs_the_reader(self):
         with patch.dict("os.environ", {"PROCESSORS": "plate_registry,photo_info", "ANTHROPIC_API_KEY": ""}):

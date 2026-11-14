@@ -18,7 +18,7 @@ from storage.schema import ads
 
 class PlateRegistryProcessor(Processor):
     name = "plate_registry"
-    version = "2"
+    version = "3"  # 3: rejected plates keep their registry record and the side-by-side comparison
     target = "ad"
     requires = ("plate_reader",)
 
@@ -54,10 +54,16 @@ class PlateRegistryProcessor(Processor):
                 if record is None:
                     unverified = unverified or (plate, score)
                     continue
-                if not plates.compare(target.listing, record)["same_car"]:
-                    result.setdefault("rejected", []).append(
-                        {"plate": plate, "registry_model": record.get("kinuy_mishari"), "year": record.get("shnat_yitzur")}
-                    )
+                comparison = plates.compare(target.listing, record)
+                if not comparison["same_car"]:
+                    result.setdefault("rejected", []).append({
+                        "plate": plate,
+                        "score": score,
+                        "registry_model": record.get("kinuy_mishari"),
+                        "year": record.get("shnat_yitzur"),
+                        "registry": record,
+                        "fields": comparison["fields"],
+                    })
                     continue
                 history = await plates.ownership_history(client, plate)
                 return {

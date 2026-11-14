@@ -183,6 +183,21 @@ def _hebrew(text: str | None) -> str:
     return letters.replace("וו", "ו").replace("יי", "י")
 
 
+# Makes Yad2 spells out letter by letter in Hebrew while the registry uses another name, by the
+# ad's make (Hebrew letters only, see _hebrew) -> the Latin name the registry's model starts with.
+MAKE_ALIASES = {
+    "גיאיסי": "JAC",  # Yad2 "ג׳יי.איי.סי", registry "ג'אק סין" with models like "JAC 40"
+}
+
+
+def _make_matches(listing: CarListing, record: dict) -> bool:
+    ad_make, registry_make = _hebrew(listing.manufacturer), _hebrew(record.get("tozeret_nm"))
+    if len(ad_make) >= 2 and ad_make[:3] == registry_make[:3]:
+        return True
+    alias = MAKE_ALIASES.get(ad_make)
+    return bool(alias) and _latin(record.get("kinuy_mishari")).startswith(alias)
+
+
 def _month(value) -> str | None:
     """'2023-9', '2023-09' or '2023-09-01T..' -> '2023-09'."""
     match = re.match(r"(\d{4})-(\d{1,2})", str(value or ""))
@@ -210,8 +225,7 @@ def compare(listing: CarListing, record: dict, history: list[dict] | None = None
         or registry_model.replace("EV", "") in ad_text
         or (bool(ad_model) and ad_model in registry_model)
     )
-    ad_make, registry_make = _hebrew(listing.manufacturer), _hebrew(record.get("tozeret_nm"))
-    make_matches = len(ad_make) >= 2 and ad_make[:3] == registry_make[:3]
+    make_matches = _make_matches(listing, record)
 
     discrepancies = []
     year = record.get("shnat_yitzur")
@@ -254,4 +268,46 @@ def compare(listing: CarListing, record: dict, history: list[dict] | None = None
         "model_matches": model_matches,
         "make_matches": make_matches,
         "discrepancies": discrepancies,
+        "fields": side_by_side(listing, record, make_matches, model_matches),
     }
+
+
+def _shares_word(first: str | None, second: str | None) -> bool:
+    """Hebrew values that name the same thing differently ("לבן" / "שנהב לבן", "חשמלי" / "חשמל")."""
+    words = lambda text: {word[:4] for word in re.findall(r"[א-תA-Za-z]{2,}", text or "")}
+    return bool(words(first) & words(second))
+
+
+def side_by_side(listing: CarListing, record: dict, make_matches: bool, model_matches: bool) -> list[dict]:
+    """The ad and the registry record field by field, for a person to judge: each row is
+    {"field", "ad", "registry", "differs"}; "differs" is None when either side is unknown."""
+    attributes = listing.attributes or {}
+    trim = record.get("ramat_gimur")
+    ad_test, registry_test = _date(attributes.get("last_test_date")), _date(record.get("mivchan_acharon_dt"))
+    ad_owner, registry_owner = owner_type(attributes.get("ownership")), owner_type(record.get("baalut"))
+    rows = [
+        ("Make", listing.manufacturer, record.get("tozeret_nm"), not make_matches),
+        ("Model", " ".join(filter(None, (listing.model, listing.sub_model))) or listing.title,
+         record.get("kinuy_mishari"), not model_matches),
+        ("Trim", listing.sub_model, trim,
+         _latin(trim) not in _latin(listing.sub_model) if trim and listing.sub_model else None),
+        ("Year", listing.year, record.get("shnat_yitzur"), listing.year != record.get("shnat_yitzur")),
+        ("On the road since", _month(attributes.get("on_road_since")), _month(record.get("moed_aliya_lakvish")),
+         _month(attributes.get("on_road_since")) != _month(record.get("moed_aliya_lakvish"))),
+        ("Last test", ad_test and f"{ad_test:%d/%m/%Y}", registry_test and f"{registry_test:%d/%m/%Y}",
+         abs((ad_test - registry_test).days) > 45 if ad_test and registry_test else None),
+        ("Ownership", attributes.get("ownership"), record.get("baalut"),
+         ad_owner != registry_owner and DEALER not in (ad_owner, registry_owner)
+         if ad_owner and registry_owner else None),
+        ("Fuel", attributes.get("engine_type"), record.get("sug_delek_nm"),
+         not _shares_word(attributes.get("engine_type"), record.get("sug_delek_nm"))),
+        ("Colour", attributes.get("color"), record.get("tzeva_rechev"),
+         not _shares_word(attributes.get("color"), record.get("tzeva_rechev"))),
+    ]
+    return [
+        {
+            "field": field, "ad": ad, "registry": registry,
+            "differs": None if ad in (None, "") or registry in (None, "") else bool(differs),
+        }
+        for field, ad, registry, differs in rows
+    ]
