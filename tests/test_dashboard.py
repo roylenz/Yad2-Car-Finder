@@ -262,6 +262,13 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(market.count("strip-dot  this"), 1)
         self.assertIn('name="ad" value="peer2"', market)
 
+    def test_ad_page_opens_photos_in_a_viewer(self):
+        page = self.client.get("/ads/6rg1e7dp").text
+        self.assertIn(f'class="photo-link" data-sha="{self.sha}"', page)
+        self.assertIn('id="viewer"', page)
+        self.assertIn("Photo viewer", page)
+        self.assertLess(page.index("<h2>Photos"), page.index("Market for"))
+
     def test_photos_and_thumbnails(self):
         self.assertEqual(self.client.get(f"/photos/{self.sha}").status_code, 200)
         thumb = self.client.get(f"/thumbs/{self.sha}")
