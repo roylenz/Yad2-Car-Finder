@@ -6,3 +6,4 @@ logs
 .env
 .venv/
 data/
+.claude/settings.local.json

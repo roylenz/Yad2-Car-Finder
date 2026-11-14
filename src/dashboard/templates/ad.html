@@ -24,6 +24,11 @@
   .impact-high, .sev-major { color: var(--critical); font-weight: 600; }
   .impact-medium, .sev-moderate { color: var(--series-2); font-weight: 600; }
   .impact-low, .sev-minor { color: var(--text-secondary); }
+  .legend-row { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-bottom: 8px; color: var(--text-secondary); font-size: 13px; }
+  .legend-row .key { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+  .legend-row .key.this { background: var(--text-primary); transform: rotate(45deg); border-radius: 1px; }
+  .axis-switch { margin-left: auto; display: inline-flex; gap: 4px; }
+  .axis-switch button[aria-pressed="true"] { background: var(--surface-2); font-weight: 600; }
 </style>
 {% endblock %}
 {% block content %}
@@ -60,6 +65,63 @@
 <div class="card">
   <div class="chart-box"><canvas id="price-chart" aria-label="Price over time" role="img"></canvas></div>
 </div>
+
+{% if model_market %}
+{% set mm = model_market %}
+{% set market_link = "/market?" ~ ({"manufacturer": ad.manufacturer, "model": ad.model, "ad": ad.token} | urlencode) %}
+<h2>Market for <bdi>{{ ad.manufacturer }} {{ ad.model }}</bdi> <span class="muted">(all searches)</span></h2>
+<div class="tiles">
+  <div class="card tile">
+    <div class="label">Ads of this model</div><div class="value">{{ mm.active }}</div>
+    <div class="sub">on Yad2 · {{ mm.removed }} removed{% if mm.median_days is not none %}, after {{ mm.median_days }} days (median){% endif %}</div>
+  </div>
+  <div class="card tile">
+    <div class="label">Median price <span class="muted">({{ mm.peer_label }})</span></div>
+    <div class="value">{{ mm.peer_median | shekels }}</div>
+    {% if mm.peer_median and ad.price %}{% set gap = ad.price - mm.peer_median %}
+    <div class="sub">This car is {% if gap == 0 %}at the median{% else %}{{ gap | abs | shekels }} {{ "above" if gap > 0 else "below" }} it{% endif %}</div>
+    {% endif %}
+  </div>
+  <div class="card tile">
+    <div class="label">Price rank <span class="muted">({{ mm.peer_label }})</span></div>
+    <div class="value">{% if mm.rank %}{{ mm.rank }} <span class="muted" style="font-size: 16px">of {{ mm.peer_count }}</span>{% else %}—{% endif %}</div>
+    <div class="sub">1 = the cheapest on Yad2</div>
+  </div>
+</div>
+<div class="card" style="margin-top: 12px">
+  <div class="legend-row">
+    <span><span class="key" style="background: var(--series-1)"></span>On Yad2</span>
+    <span><span class="key" style="background: var(--series-2)"></span>Removed</span>
+    <span><span class="key this"></span>This car</span>
+    <span class="axis-switch" role="group" aria-label="Plot against">
+      <button type="button" data-x="km" aria-pressed="true">Mileage</button>
+      <button type="button" data-x="year" aria-pressed="false">Year</button>
+    </span>
+  </div>
+  <div class="chart-box" style="height: 340px"><canvas id="market-chart" role="img" aria-label="Prices of this model"></canvas></div>
+  <p class="muted" style="margin: 8px 0 0">Click a point to open the ad. <a href="{{ market_link }}">Subtypes and full market →</a></p>
+</div>
+{% if mm.comparables %}
+<div class="card scroll" style="margin-top: 12px">
+  <p class="muted" style="margin: 0 0 8px">Cheapest on Yad2 within a year of this car</p>
+  <table>
+    <thead><tr><th>Ad</th><th class="num">Price</th><th class="num">Year</th><th class="num">Km</th><th class="num hide-sm">Hand</th><th class="num hide-sm">Days listed</th></tr></thead>
+    <tbody>
+    {% for row in mm.comparables %}
+      <tr>
+        <td><a href="/ads/{{ row.token }}"><bdi dir="rtl">{{ row.sub_model or row.title }}</bdi></a></td>
+        <td class="num">{{ row.price | shekels }}</td>
+        <td class="num">{{ row.year or "—" }}</td>
+        <td class="num">{{ row.km | number }}</td>
+        <td class="num hide-sm">{{ row.hand or "—" }}</td>
+        <td class="num hide-sm">{{ days_listed(row) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endif %}
 
 {% if same_car %}
 <h2>Same car, other ads <span class="muted">({{ same_car | length }})</span></h2>
@@ -269,6 +331,80 @@
   const dateLabel = (ms) => shortRange
     ? new Date(ms).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
     : new Date(ms).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  const marketPoints = {{ market_points | safe }};
+  const marketCanvas = document.getElementById("market-chart");
+  if (marketCanvas && marketPoints.length) {
+    let xField = "km";
+    const xLabel = (value) => xField === "km" ? Number(value).toLocaleString("en-US") + " km" : String(value);
+    const dataset = (label, keep, color, style) => ({
+      label,
+      data: marketPoints.filter((point) => keep(point) && point[xField] != null)
+        .map((point) => ({ x: point[xField], y: point.price, point })),
+      backgroundColor: token(color),
+      borderColor: token("--surface-1"),
+      borderWidth: 2,
+      pointStyle: style.pointStyle || "circle",
+      pointRadius: style.radius || 5,
+      pointHoverRadius: (style.radius || 5) + 2,
+      pointHitRadius: 8,
+      order: style.order || 1,
+    });
+    const datasets = () => [
+      dataset("This car", (point) => point.this, "--text-primary", { pointStyle: "rectRot", radius: 9, order: 0 }),
+      dataset("On Yad2", (point) => !point.this && !point.removed, "--series-1", {}),
+      dataset("Removed", (point) => !point.this && point.removed, "--series-2", {}),
+    ];
+    const chart = new Chart(marketCanvas, {
+      type: "scatter",
+      data: { datasets: datasets() },
+      options: {
+        maintainAspectRatio: false,
+        onClick: (_event, elements, chart) => {
+          if (!elements.length) return;
+          const raw = chart.data.datasets[elements[0].datasetIndex].data[elements[0].index];
+          if (!raw.point.this) window.location = "/ads/" + raw.point.token;
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: (items) => items[0].raw.point.this ? "This car" : items[0].raw.point.title,
+              label: (item) => {
+                const point = item.raw.point;
+                return [
+                  point.sub_model || "",
+                  shekels(point.price),
+                  [point.year, point.km != null ? point.km.toLocaleString("en-US") + " km" : null].filter(Boolean).join(" · "),
+                  (point.removed ? "Removed after " : "Listed ") + point.days + " days",
+                ];
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            ticks: { color: token("--text-secondary"), callback: xLabel, precision: 0 },
+            grid: { color: token("--grid") },
+            border: { color: token("--border") },
+          },
+          y: {
+            ticks: { color: token("--text-secondary"), callback: shekels },
+            grid: { color: token("--grid") },
+            border: { display: false },
+          },
+        },
+      },
+    });
+    document.querySelectorAll(".axis-switch button").forEach((button) => {
+      button.addEventListener("click", () => {
+        xField = button.dataset.x;
+        document.querySelectorAll(".axis-switch button").forEach((other) =>
+          other.setAttribute("aria-pressed", String(other === button)));
+        chart.data.datasets = datasets();
+        chart.update();
+      });
+    });
+  }
   if (points.length) {
     new Chart(document.getElementById("price-chart"), {
       type: "line",

@@ -48,6 +48,7 @@
 - Dealers (סוחר) are not hands: compare the ad's ownership and hand with the last non-dealer owner in the registry's ownership history (`plates.ownership_summary`); a first registration to a company for under 3 months is the importer, not a hand; time with dealers is reported separately
 - Reposts of one car share `ads.car_id` (token of the group's earliest ad, set only through `storage.cars.link`, reasons in `ad_links`). Dashboard lists show the newest ad per car; days on market, price drops and history span the whole group
 - The dashboard's `search` query parameter (header picker, carried in nav links and filter forms) is remembered in the `search` cookie (`chosen_search` in `dashboard/app.py`; empty value clears it, a stopped search falls back to all) and scopes overview, ads and market queries through `queries._in_search` (cars with any ad in that search's `search_ads`); the scans page uses it for history
+- An ad page's "Market for <model>" section ignores the search picker: it covers every ad of the make and model (`queries.model_market`; peers fall back from same year and subtype to same year to ±1 year until there are 3). Its link opens `/market?ad=<token>`, which also ignores the picker (without touching the cookie) and marks that car
 - One-time scans auto-deactivate after completion
 - Bot token loaded from `.env` via `python-dotenv`
 

@@ -164,6 +164,27 @@ def _phone(number: str | None) -> str:
     return f"{local[:-7]}-{local[-7:]}"
 
 
+def _market_points(rows: list, ad) -> list[dict]:
+    """The model's ads for the chart on an ad page, this car marked (added if it isn't the
+    newest ad of its car, which the market shows instead)."""
+    car = ad.car_id or ad.token
+    points = [
+        {
+            "token": row.token, "title": row.title, "sub_model": row.sub_model, "price": row.price,
+            "km": row.km, "year": row.year, "removed": row.removed_at is not None,
+            "days": queries.days_listed(row), "this": row.car == car,
+        }
+        for row in rows
+    ]
+    if rows and not any(point["this"] for point in points) and ad.price is not None:
+        points.append({
+            "token": ad.token, "title": ad.title, "sub_model": ad.sub_model, "price": ad.price,
+            "km": ad.km, "year": ad.year, "removed": ad.removed_at is not None,
+            "days": queries.days_listed(ad), "this": True,
+        })
+    return points
+
+
 def create_app(engine: Engine | None = None, store=None, authenticator=None) -> FastAPI:
     engine = engine or get_engine(default_database_url())
     store = store or LocalPhotoStore()
@@ -405,6 +426,7 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
         ]
         if ad.price is not None and ad.removed_at is None:
             price_points.append({"t": utcnow().isoformat(), "price": ad.price})
+        model_market = queries.model_market(engine, ad)
         return templates.TemplateResponse(
             request,
             "ad.html",
@@ -430,6 +452,8 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
                 "detail_groups": fields.detail_groups(ad.attributes),
                 "equipment": fields.equipment(ad.attributes),
                 "price_points": json.dumps(price_points),
+                "model_market": model_market,
+                "market_points": json.dumps(_market_points(model_market.rows if model_market else [], ad)),
                 "nav": "ads",
             },
         )
@@ -441,9 +465,12 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
         model: str = "",
         sub_model: str = "",
         x: str = "km",
+        ad: str = "",
     ):
         x = x if x in ("km", "year") else "km"
-        search_id = chosen_search(request)
+        # Opened from an ad: the whole model's market, whatever search found the ad.
+        search_id = None if ad else chosen_search(request)
+        this_car = queries.car_of(engine, ad) if ad else None
         rows = queries.market_points(engine, manufacturer or None, model or None, search_id=search_id)
         # One row per subtype once a model is chosen, otherwise one row per model.
         groups = queries.group_points(rows, by_sub_model=bool(model))
@@ -459,6 +486,7 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
                 "days": queries.days_listed(row),
                 "year": row.year,
                 "km": row.km,
+                "this": this_car is not None and row.car == this_car,
             }
             for row in scatter_rows
             if getattr(row, x) is not None
@@ -481,7 +509,7 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
                 "median_days": removed[len(removed) // 2] if removed else None,
                 "filters": {
                     "manufacturer": manufacturer, "model": model, "sub_model": sub_model, "x": x,
-                    "search": str(search_id or ""),
+                    "search": str(search_id or ""), "ad": ad,
                 },
                 "manufacturers": queries.manufacturers(engine, search_id),
                 "models": queries.models(engine, manufacturer or None, search_id),
@@ -489,6 +517,7 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
                 if model
                 else [],
                 "groups": groups,
+                "this_car": this_car,
                 "by_sub_model": bool(model),
                 "ticks": ticks,
                 "position": position,

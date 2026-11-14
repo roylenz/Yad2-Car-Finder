@@ -232,6 +232,36 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(only.count('"token": '), 1)  # scatter limited to the subtype
         self.assertIn("Models by price", self.client.get("/market").text)
 
+    def test_ad_page_shows_the_models_market(self):
+        # Corollas found by another search count too: the market is the whole model's.
+        other, _ = self.state.add_search(1, "https://www.yad2.co.il/vehicles/cars?manufacturer=19&year=2019-2020", 10)
+        cars = [
+            CarListing(f"https://www.yad2.co.il/vehicles/item/peer{number}", "טויוטה קורולה", price, 90000,
+                       year=2019, manufacturer="טויוטה", model="קורולה", sub_model="Sun היברידי")
+            for number, price in ((1, 76000), (2, 88000), (3, 95000))
+        ]
+        AdTracker(self.state.ads).apply(1, other.id, ScanOutput(cars))
+        self.client.get(f"/ads?search={self.state.chat_searches(1)[0].id}")  # remember the first search
+
+        page = self.client.get("/ads/peer2").text
+        self.assertIn("Market for <bdi>טויוטה קורולה</bdi>", page)
+        self.assertIn("2019", page)
+        self.assertIn("2 <span", page)  # rank: second cheapest of the three on Yad2
+        self.assertIn("of 3</span>", page)
+        self.assertIn("₪88,000", page)  # the median of 76,000 / 88,000 / 95,000
+        self.assertIn("at the median", page)
+        self.assertIn('href="/ads/peer1"', page)  # the cheapest within a year
+        points = json.loads(page.split("const marketPoints = ")[1].split(";\n")[0])
+        self.assertEqual(sum(point["this"] for point in points), 1)
+        self.assertEqual(len(points), 4)  # the three and the fixture's (removed) Corolla
+        self.assertIn("/market?manufacturer=", page)
+        self.assertIn("ad=peer2", page)
+
+        market = self.client.get("/market?manufacturer=טויוטה&model=קורולה&ad=peer2").text
+        self.assertIn("All searches", market)
+        self.assertEqual(market.count("strip-dot  this"), 1)
+        self.assertIn('name="ad" value="peer2"', market)
+
     def test_photos_and_thumbnails(self):
         self.assertEqual(self.client.get(f"/photos/{self.sha}").status_code, 200)
         thumb = self.client.get(f"/thumbs/{self.sha}")

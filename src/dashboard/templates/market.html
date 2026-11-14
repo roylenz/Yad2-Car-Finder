@@ -12,6 +12,7 @@
   .strip-axis .strip-track { border-bottom: none; height: 20px; }
   .strip-dot { position: absolute; width: 10px; height: 10px; border-radius: 50%; background: var(--series-1); box-shadow: 0 0 0 2px var(--surface-1); transform: translate(-50%, -50%); }
   .strip-dot.removed { background: var(--series-2); }
+  .strip-dot.this { background: var(--text-primary); border-radius: 2px; width: 12px; height: 12px; z-index: 1; transform: translate(-50%, -50%) rotate(45deg); }
   .strip-dot:hover, .strip-dot:focus-visible { width: 14px; height: 14px; z-index: 2; outline: none; }
   .strip-dot::after { content: ""; position: absolute; inset: -6px; }  /* bigger hit target */
   .strip-median { position: absolute; top: 5px; bottom: 5px; width: 2px; background: var(--text-secondary); transform: translateX(-1px); border-radius: 1px; }
@@ -28,8 +29,10 @@
 {% endblock %}
 {% block content %}
 <h1>Market</h1>
+{% if filters.ad %}<p class="secondary" style="margin-top: -8px">All searches, with <a href="/ads/{{ filters.ad }}">the car you came from</a> marked. <a href="/market">Back to the usual view</a></p>{% endif %}
 <form class="filters" method="get">
   {% if filters.search %}<input type="hidden" name="search" value="{{ filters.search }}">{% endif %}
+  {% if filters.ad %}<input type="hidden" name="ad" value="{{ filters.ad }}">{% endif %}
   <select name="manufacturer" onchange="this.form.model.value=''; if (this.form.sub_model) this.form.sub_model.value=''; this.form.submit()">
     <option value="">All makes</option>
     {% for name in manufacturers %}
@@ -80,13 +83,13 @@
   </div>
   <div class="strip" id="strip">
     {% for group in groups %}
-    {% set link = "?" ~ ({"manufacturer": group.manufacturer or "", "model": group.model or "", "sub_model": group.sub_model or "", "x": filters.x, "search": filters.search} | urlencode) %}
+    {% set link = "?" ~ ({"manufacturer": group.manufacturer or "", "model": group.model or "", "sub_model": group.sub_model or "", "x": filters.x, "search": filters.search, "ad": filters.ad} | urlencode) %}
     <div class="strip-row {{ 'selected' if filters.sub_model and filters.sub_model == group.sub_model }}">
       <a class="strip-label" href="{{ link }}" title="{{ group.name }}"><bdi dir="rtl">{{ group.name }}</bdi></a>
       <div class="strip-track">
         <span class="strip-median" style="left: {{ position(group.median_price) }}%"></span>
         {% for row in group.points %}
-        <a class="strip-dot {{ 'removed' if row.removed_at else '' }}" href="/ads/{{ row.token }}"
+        <a class="strip-dot {{ 'removed' if row.removed_at else '' }} {{ 'this' if this_car and row.car == this_car else '' }}" href="/ads/{{ row.token }}"
            style="left: {{ position(row.price) }}%; top: calc(50% + {{ (loop.index0 % 3 - 1) * 5 }}px)"
            data-tip="{{ row.price | shekels }} · {{ row.year or '' }} · {{ row.km | number }} km{{ ' · removed' if row.removed_at else '' }}"
            aria-label="{{ group.name }}: {{ row.price | shekels }}"></a>
@@ -181,7 +184,7 @@
   const xLabel = (value) => xField === "km" ? Number(value).toLocaleString("en-US") + " km" : String(value);
   const series = (removed, color) => ({
     label: removed ? "Removed" : "On Yad2",
-    data: points.filter((point) => point.removed === removed).map((point) => ({ x: point.x, y: point.price, point })),
+    data: points.filter((point) => point.removed === removed && !point.this).map((point) => ({ x: point.x, y: point.price, point })),
     backgroundColor: token(color),
     borderColor: token("--surface-1"),
     borderWidth: 2,
@@ -191,7 +194,15 @@
   });
   new Chart(document.getElementById("market-chart"), {
     type: "scatter",
-    data: { datasets: [series(false, "--series-1"), series(true, "--series-2")] },
+    data: { datasets: [
+      {
+        label: "This car",
+        data: points.filter((point) => point.this).map((point) => ({ x: point.x, y: point.price, point })),
+        backgroundColor: token("--text-primary"), borderColor: token("--surface-1"), borderWidth: 2,
+        pointStyle: "rectRot", pointRadius: 9, pointHoverRadius: 11, order: 0,
+      },
+      series(false, "--series-1"), series(true, "--series-2"),
+    ] },
     options: {
       maintainAspectRatio: false,
       onClick: (_event, elements, chart) => {

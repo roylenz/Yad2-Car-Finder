@@ -432,6 +432,7 @@ def market_points(
                 ads.c.manufacturer, ads.c.model, ads.c.sub_model,
                 ads.c.listed_at, ads.c.first_seen_at, ads.c.removed_at,
                 _market_since().label("market_since"),
+                _car_key(ads).label("car"),
             ).where(*conditions)
         ).all()
 
@@ -701,3 +702,70 @@ def sale_counts(engine: Engine) -> dict[str, int]:
             .group_by(func.coalesce(ads.c.sale_status, "queued"))
         ).all()
     return {status: count for status, count in rows}
+
+
+@dataclass
+class ModelMarket:
+    """Where one ad stands among every tracked ad of its make and model (all searches)."""
+    rows: list
+    active: int
+    removed: int
+    median_days: int | None  # until removal, for ads that are gone
+    peer_label: str  # which ads the ad is compared with, e.g. "2022 · same subtype"
+    peer_count: int  # ads on Yad2 in that comparison, the ad included
+    peer_median: int | None
+    rank: int | None  # 1 = the cheapest of them
+    comparables: list  # the cheapest ads on Yad2 within a year of this one
+
+
+MIN_PEERS = 3
+
+
+def car_of(engine: Engine, token: str) -> str | None:
+    """The key every ad of the same car shares (see storage.cars)."""
+    with engine.connect() as db:
+        return db.execute(select(_car_key(ads)).where(ads.c.token == token)).scalar_one_or_none()
+
+
+def model_market(engine: Engine, ad) -> ModelMarket | None:
+    """The market for the ad's model, across all searches; None without a make and model."""
+    if not ad.manufacturer or not ad.model:
+        return None
+    rows = market_points(engine, ad.manufacturer, ad.model)
+    car = ad.car_id or ad.token
+    others = [row for row in rows if row.car != car]
+    live = [row for row in others if row.removed_at is None]
+
+    # Compare with the closest group that still has a few ads: same year and subtype, then
+    # same year, then a year either side.
+    choices = [
+        (f"{ad.year} · same subtype", lambda row: row.year == ad.year and row.sub_model == ad.sub_model),
+        (f"{ad.year}", lambda row: row.year == ad.year),
+        (f"{ad.year - 1}–{ad.year + 1}" if ad.year else "all years",
+         lambda row: ad.year is None or row.year is not None and abs(row.year - ad.year) <= 1),
+        ("all years", lambda row: True),
+    ]
+    if not ad.sub_model:
+        choices = choices[1:]
+    for label, keep in choices:
+        peers = [row for row in live if keep(row)]
+        if len(peers) + 1 >= MIN_PEERS:
+            break
+    prices = [row.price for row in peers]
+    if ad.price is not None and ad.removed_at is None:
+        prices.append(ad.price)
+    rank = None
+    if ad.price is not None and prices:
+        rank = 1 + sum(1 for price in prices if price < ad.price)
+    near = [row for row in live if ad.year is None or row.year is not None and abs(row.year - ad.year) <= 1]
+    return ModelMarket(
+        rows=rows,
+        active=sum(1 for row in rows if row.removed_at is None),
+        removed=sum(1 for row in rows if row.removed_at is not None),
+        median_days=_median([days_listed(row) for row in rows if row.removed_at]),
+        peer_label=label,
+        peer_count=len(prices),
+        peer_median=_median(prices),
+        rank=rank,
+        comparables=sorted(near, key=lambda row: row.price)[:8],
+    )
