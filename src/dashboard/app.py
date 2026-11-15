@@ -147,6 +147,10 @@ def _change_summary(changes: dict | None) -> str:
             parts.append(f"Mileage {_number(old)} → {_number(new)}")
         elif field == "description":
             parts.append("Description edited")
+        elif field == "photos":
+            removed, added = old, new
+            counts = [f"{added} new" if added else "", f"{removed} removed" if removed else ""]
+            parts.append("Photos changed: " + ", ".join(part for part in counts if part))
         else:
             parts.append(f"{field.replace('_', ' ').capitalize()}: {old} → {new}")
     return "; ".join(parts)

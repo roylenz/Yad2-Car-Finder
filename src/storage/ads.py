@@ -113,7 +113,7 @@ class AdRepository:
                 if old is None:
                     self._insert(db, listing, now)
                 else:
-                    self._update(db, old, listing, now)
+                    self._update(db, old, listing, now, self._photo_change(db, listing))
                 self._record_photos(db, listing, now)
 
     @staticmethod
@@ -148,7 +148,28 @@ class AdRepository:
         )
 
     @staticmethod
-    def _update(db, old, listing: CarListing, now: datetime.datetime) -> None:
+    def _photo_change(db, listing: CarListing) -> list[int] | None:
+        """[removed, added] when the seller changed an ad's photos (e.g. real photos in place
+        of Yad2's stock pictures); None when unchanged or the ad had no photos yet."""
+        if not listing.images:
+            return None
+        current = set(
+            db.execute(
+                select(photos.c.source_url).where(
+                    photos.c.token == listing.token, photos.c.removed_from_ad_at.is_(None)
+                )
+            ).scalars()
+        )
+        if not current:
+            return None
+        new = set(listing.images)
+        removed, added = len(current - new), len(new - current)
+        return [removed, added] if removed or added else None
+
+    @staticmethod
+    def _update(
+        db, old, listing: CarListing, now: datetime.datetime, photo_change: list[int] | None = None
+    ) -> None:
         changes = {}
         values = {}
         if is_badge_price(old.price, listing):
@@ -182,6 +203,8 @@ class AdRepository:
             old_value = old_attributes.get(key)
             if key not in _VOLATILE_ATTRIBUTES and old_value is not None and new_value != old_value:
                 changes[key] = [old_value, new_value]
+        if photo_change:
+            changes["photos"] = photo_change
         values.update(
             attributes={**old_attributes, **listing.attributes},
             last_seen_at=now,

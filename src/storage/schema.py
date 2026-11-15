@@ -164,7 +164,8 @@ ad_snapshots = Table(
     Column("observed_at", DateTime, nullable=False),
     Column("price", Integer),
     Column("km", Integer),
-    Column("changes", JSON),  # {field: [old, new]}; null on first sighting
+    # {field: [old, new]}; null on first sighting. "photos" is [removed, added] photo counts.
+    Column("changes", JSON),
     Index("ix_ad_snapshots_token", "token", "observed_at"),
 )
 

@@ -305,6 +305,13 @@ class PlatePipelineTests(StoreTestCase):
         self.assertEqual(result["photos_with_plate"], 1)  # the replaced stock picture is left out
         self.assertEqual(asyncio.run(ProcessingRunner(self.state.engine, self.store, [reader, registry]).run_pending()), 0)
 
+        # The swap shows in the overview's recent changes and the ad's history.
+        web = TestClient(create_app(self.state.engine, self.store, auth.NoAuth()))
+        self.assertIn("Photos changed: 1 new, 1 removed", web.get("/").text)
+        self.assertIn("Photos changed: 1 new, 1 removed", web.get("/ads/limo0001").text)
+        self.state.ads.record([limo(FIRST, images=(f"{FIRST}/real.jpg",))], utcnow())  # unchanged
+        self.assertEqual(web.get("/").text.count("Photos changed"), 1)
+
     def test_ad_waits_for_photo_results_and_rejects_a_different_car(self):
         self.state.ads.record([limo(FIRST, images=(f"{FIRST}/a.jpg",))])
         (red,) = self.store_photos(["red"])

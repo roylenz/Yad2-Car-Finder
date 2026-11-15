@@ -135,7 +135,8 @@ Each scan reads the search results from the JSON in Yad2's page (price, photos, 
 model, year, hand). It opens an ad's own page for new ads, ads whose price changed, ads not
 refreshed in 24 hours (up to 20 per scan), and ads that left the results. That page adds
 mileage and the remaining parameters, and shows whether Yad2 removed the ad. A history row is
-written only when something changes. After each scan, new photos are downloaded and the
+written only when something changes, including the seller replacing photos ("Photos changed:
+7 new, 2 removed" on the overview and the ad page). After each scan, new photos are downloaded and the
 enabled processors run in the background. Background work pauses while a scan runs, so the
 browser has the Pi's CPU (Yad2's bot check fails on a slow browser), and carries on within a few seconds of the scan ending.
 
