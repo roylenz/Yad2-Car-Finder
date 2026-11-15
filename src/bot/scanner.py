@@ -232,6 +232,10 @@ class Scanner:
                 self._running.discard(search_id)
                 self._pending.discard(search_id)
                 self._queue.task_done()
+                # Only now does is_scanning() say no: woken earlier, the background pipeline
+                # saw the scan still running and paused itself.
+                if not self._running:
+                    self.on_scan_complete()
 
     async def _run_scan(self, context: ContextTypes.DEFAULT_TYPE, search: Search) -> None:
         chat_id, url = search.chat_id, search.url
@@ -268,7 +272,6 @@ class Scanner:
             # Keep what the scan learned about the ads, without alert state for this chat.
             self.state.ads.record(output.listings + output.left_search)
             self.state.ads.mark_removed(output.removed)
-            self.on_scan_complete()
             self._log_cancelled(scan_id, "Search stopped during the scan")
             return
 
@@ -282,7 +285,6 @@ class Scanner:
                 removed=len(result.removed),
                 details_fetched=output.details_fetched,
             )
-        self.on_scan_complete()
         if result.new:
             await self._send_safe(context, chat_id, f"🚗 {len(result.new)} new car(s) found{label}")
             await self._send_listings(context, chat_id, [format_listing(item) for item in result.new])

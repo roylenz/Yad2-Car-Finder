@@ -577,3 +577,33 @@ class BrowserStartTests(unittest.TestCase):
             asyncio.run(car_finder.stop_unconnected_browsers())
         stuck._process.terminate.assert_called_once()
         working._process.terminate.assert_not_called()
+
+
+class PipelineResumeTests(TempStateTestCase):
+    def test_paused_for_a_scan_it_carries_on_when_the_scan_ends(self):
+        from storage.background_status import read_status
+        from tracking.background import BackgroundPipeline
+
+        pipeline = BackgroundPipeline(self.state.ads, LocalPhotoStore(self.directory / "photos"))
+        pipeline.busy_poll_seconds = 0.01
+        scanning = {"now": True}
+        pipeline.busy = lambda: scanning["now"]
+        rounds = []
+
+        async def run_once():
+            rounds.append(scanning["now"])
+            if scanning["now"]:
+                pipeline._report("paused", "Waiting for the running scan to finish")
+
+        pipeline.run_once = run_once
+
+        async def scenario():
+            pipeline.start()  # idle wait is 600 s: a second round can only come from the resume
+            await asyncio.sleep(0.05)
+            scanning["now"] = False  # the scan ends; nobody calls wake()
+            await asyncio.sleep(0.1)
+            await pipeline.stop()
+
+        asyncio.run(scenario())
+        self.assertEqual(rounds, [True, False])
+        self.assertEqual(read_status(self.state.engine).state, "idle")

@@ -136,7 +136,7 @@ refreshed in 24 hours (up to 20 per scan), and ads that left the results. That p
 mileage and the remaining parameters, and shows whether Yad2 removed the ad. A history row is
 written only when something changes. After each scan, new photos are downloaded and the
 enabled processors run in the background. Background work pauses while a scan runs, so the
-browser has the Pi's CPU (Yad2's bot check fails on a slow browser).
+browser has the Pi's CPU (Yad2's bot check fails on a slow browser), and carries on within a few seconds of the scan ending.
 
 Seller numbers: when a scan reads a new ad it also opens the ad in a second tab, presses
 "הצגת מספר טלפון" (or a dealer's "יצירת קשר") and saves the seller's name and the number shown (Yad2's forwarding number)

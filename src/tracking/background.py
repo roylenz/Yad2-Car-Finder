@@ -27,6 +27,7 @@ class BackgroundPipeline:
         self.sales = SaleWatch(ads.engine)
         self.phones = PhoneCollector(ads)
         self.idle_seconds = idle_seconds
+        self.busy_poll_seconds = 5
         self.ads = ads
         self.status = StatusBoard(ads.engine)
         # Returns True while a scan runs: Yad2's bot check fails when the browser is starved
@@ -97,6 +98,12 @@ class BackgroundPipeline:
             except Exception as error:
                 logger.error("Background pipeline failed", error=str(error))
                 self._report("error", str(error))
+            if self.busy():
+                # Paused for a scan: carry on as soon as it ends, not after the idle wait.
+                while self.busy():
+                    await asyncio.sleep(self.busy_poll_seconds)
+                self._wake.clear()
+                continue
             try:
                 await asyncio.wait_for(self._wake.wait(), self.idle_seconds)
             except TimeoutError:
