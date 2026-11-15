@@ -199,7 +199,7 @@ a later pass). The bundled processors:
 | `photo_info` | photo | Image size and format (example) |
 | `plate_reader` | photo | Finds and reads licence plates with local ONNX models |
 | `photo_hash` | photo | Perceptual hash (dHash) for spotting the same photo in other ads |
-| `plate_registry` | ad | Votes on the plate across the ad's photos, confirms it in the data.gov.il registry, saves it and the ownership history on the ad, links other ads with the same plate. Also reads the registry's change history and open recalls: a structural change, gas conversion, colour or tyre change, a recall not done yet, or less mileage in the ad than the registry recorded at the last test shows as a red "Registry warning" on the ad page and is leverage in the haggle brief |
+| `plate_registry` | ad | Votes on the plate across the ad's photos, confirms it in the data.gov.il registry, saves it and the ownership history on the ad, links other ads with the same plate. Also reads the registry's change history and open recalls: a structural change, gas conversion, colour or tyre change, a recall not done yet, or less mileage in the ad than the registry recorded at the last test shows as a red "Registry warning" on the ad page and is leverage in the haggle brief. Looks up the importer's list price for the model code when new (its model year, else the nearest year listed), shown on the ad page next to the asking price |
 | `repost_matcher` | ad | Links reposts of the same car by shared photos and similar descriptions |
 | `claude_condition` | ad | Claude Sonnet inspects photos and description for damage and price factors (one request per active ad, ~3 cents) |
 

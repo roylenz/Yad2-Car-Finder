@@ -133,6 +133,7 @@ def _registry(ad, result: dict | None) -> dict:
             warnings=result.get("warnings") or [],
             change_history=result.get("vehicle_history"),
             open_recalls=result.get("recalls") or [],
+            new_price=result.get("new_price"),  # importer's list price for the model when new
         )
     else:
         out["plate_confirmed"] = False

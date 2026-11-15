@@ -77,7 +77,8 @@
 </p>
 
 <div class="tiles">
-  <div class="card tile"><div class="label">Price</div><div class="value">{{ ad.price | shekels }}</div></div>
+  <div class="card tile"><div class="label">Price</div><div class="value">{{ ad.price | shekels }}</div>
+    {% if plate and plate.new_price %}<div class="sub">{{ plate.new_price.price | shekels }} new</div>{% endif %}</div>
   <div class="card tile">
     <div class="label">Days listed</div><div class="value">{{ days_listed(ad) }}</div>
     <div class="sub">{{ "Since Yad2 posting" if ad.listed_at else "Since first seen by the bot" }}</div>
@@ -199,6 +200,11 @@
         <span class="plate">{{ plate.plate | plate }}</span>
         {% if plate.status == "confirmed" %}<span class="badge ok">Confirmed in the vehicle registry</span>
         {% else %}<span class="badge">Not in the registry dataset</span>{% endif %}
+        {% if plate.new_price %}
+        <p style="margin:10px 0 0">Price when new: <strong>{{ plate.new_price.price | shekels }}</strong>
+          <span class="muted">(importer's list price{% if plate.new_price.year %} for {{ plate.new_price.year }}{% if not plate.new_price.exact_year %}, the nearest year listed{% endif %}{% endif %})</span>{% if ad.price %}.
+          Asking is {{ (100 * ad.price / plate.new_price.price) | round | int }}% of it.{% endif %}</p>
+        {% endif %}
         {% if plate.warnings %}
         <h3 style="font-size:14px; margin:14px 0 6px">Registry warnings</h3>
         <ul class="findings">{% for item in plate.warnings %}<li class="impact-high" dir="auto">{{ item }}</li>{% endfor %}</ul>

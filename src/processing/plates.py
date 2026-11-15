@@ -21,6 +21,9 @@ OWNERSHIP_RESOURCE = "bb2355dc-9ec7-4f06-9c3f-3344672171da"  # ownership history
 # Per car: structural change, gas conversion, colour and tyre changes, mileage at the last test.
 HISTORY_RESOURCE = "56063a99-8a3e-4ff4-912e-5966c0279bad"
 RECALL_RESOURCE = "36bf1404-0be4-49d2-82dc-2f1ead4a8b93"  # cars with a recall not done yet
+PRICE_RESOURCE = "39f455bf-6db0-4926-859d-017f34eacbcb"  # importers' new-car list prices
+# Kept from the registry record (not shown) to find the model in other datasets.
+CODE_FIELDS = ("tozeret_cd", "degem_cd", "sug_degem")
 DEALER = "dealer"
 PLATE_LENGTHS = (7, 8)
 MIN_SCORE = 0.9  # summed OCR confidence a plate needs before it is looked up
@@ -95,7 +98,7 @@ async def lookup(client: httpx.AsyncClient, plate: str) -> dict | None:
     records = payload["result"]["records"]
     if not records:
         return None
-    return {key: records[0].get(key) for key in REGISTRY_FIELDS}
+    return {key: records[0].get(key) for key in (*REGISTRY_FIELDS, *CODE_FIELDS)}
 
 
 async def ownership_history(client: httpx.AsyncClient, plate: str) -> list[dict]:
@@ -260,6 +263,27 @@ async def open_recalls(client: httpx.AsyncClient, plate: str) -> list[dict]:
         for record in records
     ]
     return sorted(recalls, key=lambda recall: recall["opened"] or "")
+
+
+async def new_price(client: httpx.AsyncClient, record: dict) -> dict | None:
+    """The importer's list price for the car's model code when new: for its model year, else
+    the nearest year listed. None when the model is not in the price list."""
+    if record.get("tozeret_cd") is None or record.get("degem_cd") is None:
+        return None
+    filters = {"tozeret_cd": record["tozeret_cd"], "degem_cd": record["degem_cd"]}
+    if record.get("sug_degem"):
+        filters["sug_degem"] = record["sug_degem"]
+    prices = [row for row in await _records(client, PRICE_RESOURCE, filters) if row.get("mehir")]
+    if not prices:
+        return None
+    year = record.get("shnat_yitzur") or 0
+    best = min(prices, key=lambda row: (abs((row.get("shnat_yitzur") or 0) - year), -(row.get("shnat_yitzur") or 0)))
+    return {
+        "price": best["mehir"],
+        "year": best.get("shnat_yitzur"),
+        "exact_year": best.get("shnat_yitzur") == year,
+        "importer": best.get("shem_yevuan"),
+    }
 
 
 def registry_warnings(listing: CarListing, history: dict | None, recalls: list[dict]) -> list[str]:

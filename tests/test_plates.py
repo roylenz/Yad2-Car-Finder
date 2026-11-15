@@ -74,6 +74,7 @@ HISTORY = [
 def registry_transport(
     records: dict[int, dict], calls: list | None = None, histories: dict[int, list] | None = None,
     changes: dict[int, dict] | None = None, recalls: dict[int, list] | None = None,
+    prices: list[dict] | None = None,
 ) -> httpx.MockTransport:
     histories = {13107604: HISTORY} if histories is None else histories
     changes = changes or {}
@@ -83,6 +84,9 @@ def registry_transport(
         filters = json.loads(request.url.params["filters"])
         plate = filters.get("mispar_rechev") or filters.get("MISPAR_RECHEV")
         resource = request.url.params["resource_id"]
+        if resource == plates.PRICE_RESOURCE:
+            found = [row for row in prices or [] if all(row.get(key) == value for key, value in filters.items())]
+            return httpx.Response(200, json={"success": True, "result": {"records": found}})
         if resource == plates.OWNERSHIP_RESOURCE:
             found = histories.get(plate, [])
         elif resource == plates.HISTORY_RESOURCE:
@@ -295,8 +299,14 @@ class PlatePipelineTests(StoreTestCase):
             "MISPAR_RECHEV": 13107604, "RECALL_ID": 15781, "SUG_RECALL": "תקלה סידרתית בטיחותית",
             "SUG_TAKALA": "בלמים", "TEUR_TAKALA": "נוזל  בלמים עלול   לדלוף", "TAARICH_PTICHA": "2025-02-03",
         }
+        prices = [
+            {"tozeret_cd": 1321, "degem_cd": 16, "sug_degem": "P", "shnat_yitzur": year, "mehir": price,
+             "shem_yevuan": "יבואן"}
+            for year, price in ((2023, 157990), (2024, 159990), (2025, 169500))
+        ]
+        record = {**RECORD, "tozeret_cd": 1321, "degem_cd": 16, "sug_degem": "P"}
         client = httpx.AsyncClient(transport=registry_transport(
-            {13107604: RECORD}, changes={13107604: changes}, recalls={13107604: [recall]}))
+            {13107604: record}, changes={13107604: changes}, recalls={13107604: [recall]}, prices=prices))
         runner = ProcessingRunner(
             self.state.engine, self.store,
             [FakePlateReader({red: [reading("13107604")]}), PlateRegistryProcessor(client)],
@@ -319,6 +329,10 @@ class PlatePipelineTests(StoreTestCase):
         page = TestClient(create_app(self.state.engine, self.store, auth.NoAuth())).get("/ads/limo0001").text
         self.assertIn("Registry warnings", page)
         self.assertIn("41,250 km", page)
+        # The list price for the registry's model year (2024), not another year's.
+        self.assertEqual((result["new_price"]["price"], result["new_price"]["exact_year"]), (159990, True))
+        self.assertIn("Price when new: <strong>₪159,990</strong>", page)
+        self.assertIn("₪159,990 new", page)
 
     def test_a_clean_registry_history_says_so(self):
         self.state.ads.record([limo(FIRST, images=(f"{FIRST}/a.jpg",))])

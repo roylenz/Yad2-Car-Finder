@@ -5,7 +5,8 @@ data.gov.il, and keeps the first one the registry lists as the advertised car. T
 the ownership history (owners and dealers by month) are saved on the ad, and other ads with the
 same plate are linked as reposts of the same car. The registry's change history (structural
 change, gas conversion, colour and tyre changes, mileage at the last test) and the car's open
-recalls become warnings on the ad page and in the haggle brief.
+recalls become warnings on the ad page and in the haggle brief; the importer's list price for
+the model when new is shown next to the asking price.
 """
 
 import httpx
@@ -21,8 +22,9 @@ from storage.schema import ads
 class PlateRegistryProcessor(Processor):
     name = "plate_registry"
     # 3: rejected plates keep their registry record; 4: hands and original owner compared;
-    # 5: change history (structural, gas, colour, tyres, test mileage) and open recalls
-    version = "5"
+    # 5: change history (structural, gas, colour, tyres, test mileage) and open recalls;
+    # 6: the importer's list price when new
+    version = "6"
     target = "ad"
     requires = ("plate_reader",)
 
@@ -72,6 +74,7 @@ class PlateRegistryProcessor(Processor):
                 history = await plates.ownership_history(client, plate)
                 changes = await plates.vehicle_history(client, plate)
                 recalls = await plates.open_recalls(client, plate)
+                price_new = await plates.new_price(client, record)
                 return {
                     **result,
                     "plate": plate,
@@ -83,6 +86,7 @@ class PlateRegistryProcessor(Processor):
                     **plates.compare(target.listing, record, history),
                     "vehicle_history": changes,
                     "recalls": recalls,
+                    "new_price": price_new,
                     "warnings": plates.registry_warnings(target.listing, changes, recalls),
                 }
         finally:
