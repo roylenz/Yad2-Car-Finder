@@ -18,6 +18,9 @@ from car.listing import CarListing
 REGISTRY_URL = "https://data.gov.il/api/3/action/datastore_search"
 REGISTRY_RESOURCE = "053cea08-09bc-40ec-8f7a-156f0677aff3"  # private and commercial vehicles
 OWNERSHIP_RESOURCE = "bb2355dc-9ec7-4f06-9c3f-3344672171da"  # ownership history (month + owner type)
+# Per car: structural change, gas conversion, colour and tyre changes, mileage at the last test.
+HISTORY_RESOURCE = "56063a99-8a3e-4ff4-912e-5966c0279bad"
+RECALL_RESOURCE = "36bf1404-0be4-49d2-82dc-2f1ead4a8b93"  # cars with a recall not done yet
 DEALER = "dealer"
 PLATE_LENGTHS = (7, 8)
 MIN_SCORE = 0.9  # summed OCR confidence a plate needs before it is looked up
@@ -212,6 +215,76 @@ def _date(value) -> datetime.date | None:
         return datetime.date.fromisoformat(str(value)[:10])
     except ValueError:
         return None
+
+
+async def _records(client: httpx.AsyncClient, resource: str, filters: dict, limit: int = 100) -> list[dict]:
+    response = await client.get(
+        REGISTRY_URL,
+        params={"resource_id": resource, "filters": json.dumps(filters), "limit": limit},
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not payload.get("success"):
+        raise RuntimeError(f"Registry lookup failed: {payload.get('error')}")
+    return payload["result"]["records"]
+
+
+async def vehicle_history(client: httpx.AsyncClient, plate: str) -> dict | None:
+    """What the registry recorded about changes to the car since it was registered."""
+    records = await _records(client, HISTORY_RESOURCE, {"mispar_rechev": int(plate)}, limit=1)
+    if not records:
+        return None
+    record = records[0]
+    return {
+        "structural_change": bool(record.get("shinui_mivne_ind")),
+        "gas_conversion": bool(record.get("gapam_ind")),
+        "colour_change": bool(record.get("shnui_zeva_ind")),
+        "tyre_change": bool(record.get("shinui_zmig_ind")),
+        "km_at_last_test": record.get("kilometer_test_aharon") or None,
+        "first_registered": record.get("rishum_rishon_dt") or None,
+        "origin": (record.get("mkoriut_nm") or "").strip() or None,
+    }
+
+
+async def open_recalls(client: httpx.AsyncClient, plate: str) -> list[dict]:
+    """Manufacturer recalls this car has not had done yet, oldest first."""
+    records = await _records(client, RECALL_RESOURCE, {"MISPAR_RECHEV": int(plate)})
+    recalls = [
+        {
+            "id": record.get("RECALL_ID"),
+            "kind": record.get("SUG_RECALL"),
+            "system": record.get("SUG_TAKALA"),
+            "fault": " ".join(str(record.get("TEUR_TAKALA") or "").split()),
+            "opened": record.get("TAARICH_PTICHA"),
+        }
+        for record in records
+    ]
+    return sorted(recalls, key=lambda recall: recall["opened"] or "")
+
+
+def registry_warnings(listing: CarListing, history: dict | None, recalls: list[dict]) -> list[str]:
+    """Red flags from the registry's change history and open recalls, worded for the buyer."""
+    warnings = []
+    if history:
+        if history["structural_change"]:
+            warnings.append("Registry records a structural change (שינוי מבנה): usually a major repair or a modification")
+        if history["gas_conversion"]:
+            warnings.append("Registry records a conversion to run on gas (LPG)")
+        if history["colour_change"]:
+            warnings.append("Registry records a colour change: the car was repainted")
+        if history["tyre_change"]:
+            warnings.append("Registry records a tyre change from the original specification")
+        if history["origin"]:
+            warnings.append(f"Registry origin: {history['origin']}")
+        registry_km = history["km_at_last_test"]
+        if registry_km and listing.km is not None and listing.km < registry_km:
+            warnings.append(
+                f"Ad says {listing.km:,} km, but the registry recorded {registry_km:,} km at the last "
+                "test: the odometer was turned back or the ad is wrong"
+            )
+    for recall in recalls:
+        warnings.append(f"Recall not done yet (opened {recall['opened']}): {recall['fault']}")
+    return warnings
 
 
 def compare(listing: CarListing, record: dict, history: list[dict] | None = None) -> dict:

@@ -26,8 +26,9 @@ says, or a lease, rental or company owner where the ad says private), that is th
 leverage: make it the first argument, with the months from the registry. Base every argument on the facts given, and cite the evidence (numbers, dates, photo numbers, registry \
 fields). Never invent facts, other offers or competing cars that are not in the data. Strong \
 leverage is usually: long time on the market, repeated price drops or reposts, cheaper \
-comparable cars, ownership the ad hides (dealer, rental, company, more hands), damage or wear \
-in the photos, a test due soon. If something is unknown, say what to ask the seller instead: questions that each ask one thing, that the \
+comparable cars, ownership the ad hides (dealer, rental, company, more hands), registry warnings \
+(a structural change, gas conversion or repaint on record, a recall not done yet, less mileage \
+than the registry recorded at the last test), damage or wear in the photos, a test due soon. If something is unknown, say what to ask the seller instead: questions that each ask one thing, that the \
 seller can answer on the phone, never requests to send photos or documents, and nothing that is the same for every \
 car of this model (the manufacturer's warranty, specs, standard equipment). Leverage is only what \
 argues for a lower price: never list cars priced above this one as leverage. Use only what a \

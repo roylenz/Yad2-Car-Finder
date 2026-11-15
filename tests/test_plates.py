@@ -72,14 +72,23 @@ HISTORY = [
 
 
 def registry_transport(
-    records: dict[int, dict], calls: list | None = None, histories: dict[int, list] | None = None
+    records: dict[int, dict], calls: list | None = None, histories: dict[int, list] | None = None,
+    changes: dict[int, dict] | None = None, recalls: dict[int, list] | None = None,
 ) -> httpx.MockTransport:
     histories = {13107604: HISTORY} if histories is None else histories
+    changes = changes or {}
+    recalls = recalls or {}
 
     def handle(request: httpx.Request) -> httpx.Response:
-        plate = json.loads(request.url.params["filters"])["mispar_rechev"]
-        if request.url.params["resource_id"] == plates.OWNERSHIP_RESOURCE:
+        filters = json.loads(request.url.params["filters"])
+        plate = filters.get("mispar_rechev") or filters.get("MISPAR_RECHEV")
+        resource = request.url.params["resource_id"]
+        if resource == plates.OWNERSHIP_RESOURCE:
             found = histories.get(plate, [])
+        elif resource == plates.HISTORY_RESOURCE:
+            found = [changes[plate]] if plate in changes else []
+        elif resource == plates.RECALL_RESOURCE:
+            found = recalls.get(plate, [])
         else:
             if calls is not None:
                 calls.append(plate)
@@ -273,6 +282,57 @@ class PlatePipelineTests(StoreTestCase):
         self.assertNotIn("/ads/limo0001", listing)
         self.assertIn("/ads/limo0002", listing)
         self.assertIn("Reposted ×1", listing)
+
+    def test_registry_change_history_and_open_recalls_become_warnings(self):
+        self.state.ads.record([limo(FIRST, images=(f"{FIRST}/a.jpg",), km=30000)])
+        (red,) = self.store_photos(["red"])
+        changes = {
+            "mispar_rechev": 13107604, "kilometer_test_aharon": 41250, "shinui_mivne_ind": 1,
+            "gapam_ind": 0, "shnui_zeva_ind": 1, "shinui_zmig_ind": 0,
+            "rishum_rishon_dt": "2024-03-01", "mkoriut_nm": "",
+        }
+        recall = {
+            "MISPAR_RECHEV": 13107604, "RECALL_ID": 15781, "SUG_RECALL": "תקלה סידרתית בטיחותית",
+            "SUG_TAKALA": "בלמים", "TEUR_TAKALA": "נוזל  בלמים עלול   לדלוף", "TAARICH_PTICHA": "2025-02-03",
+        }
+        client = httpx.AsyncClient(transport=registry_transport(
+            {13107604: RECORD}, changes={13107604: changes}, recalls={13107604: [recall]}))
+        runner = ProcessingRunner(
+            self.state.engine, self.store,
+            [FakePlateReader({red: [reading("13107604")]}), PlateRegistryProcessor(client)],
+        )
+        asyncio.run(runner.run_pending())
+        with self.state.engine.connect() as db:
+            result = db.execute(
+                select(analysis_results.c.result).where(analysis_results.c.processor == "plate_registry")
+            ).scalar_one()
+        self.assertEqual(result["status"], "confirmed")
+        self.assertTrue(result["vehicle_history"]["structural_change"])
+        self.assertEqual(result["recalls"][0]["fault"], "נוזל בלמים עלול לדלוף")
+        warnings = result["warnings"]
+        self.assertEqual(len(warnings), 4)
+        self.assertIn("structural change", warnings[0])
+        self.assertIn("repainted", warnings[1])
+        self.assertIn("Ad says 30,000 km, but the registry recorded 41,250 km", warnings[2])
+        self.assertIn("Recall not done yet (opened 2025-02-03)", warnings[3])
+
+        page = TestClient(create_app(self.state.engine, self.store, auth.NoAuth())).get("/ads/limo0001").text
+        self.assertIn("Registry warnings", page)
+        self.assertIn("41,250 km", page)
+
+    def test_a_clean_registry_history_says_so(self):
+        self.state.ads.record([limo(FIRST, images=(f"{FIRST}/a.jpg",))])
+        (red,) = self.store_photos(["red"])
+        clean = {"mispar_rechev": 13107604, "kilometer_test_aharon": 0, "shinui_mivne_ind": 0,
+                 "gapam_ind": 0, "shnui_zeva_ind": 0, "shinui_zmig_ind": 0, "mkoriut_nm": ""}
+        client = httpx.AsyncClient(transport=registry_transport({13107604: RECORD}, changes={13107604: clean}))
+        asyncio.run(ProcessingRunner(
+            self.state.engine, self.store,
+            [FakePlateReader({red: [reading("13107604")]}), PlateRegistryProcessor(client)],
+        ).run_pending())
+        page = TestClient(create_app(self.state.engine, self.store, auth.NoAuth())).get("/ads/limo0001").text
+        self.assertNotIn("Registry warnings", page)
+        self.assertIn("no structural change, gas conversion, colour or tyre change, and no open recall", page)
 
     def test_ad_is_checked_again_when_the_seller_adds_photos(self):
         from storage.db import utcnow

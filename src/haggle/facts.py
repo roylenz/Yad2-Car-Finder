@@ -128,6 +128,11 @@ def _registry(ad, result: dict | None) -> dict:
             last_test=record.get("mivchan_acharon_dt"),
             test_valid_until=record.get("tokef_dt"),
             discrepancies=result.get("discrepancies") or [],
+            # Structural change, gas conversion, repaint, tyres, mileage at the last test,
+            # recalls not done yet.
+            warnings=result.get("warnings") or [],
+            change_history=result.get("vehicle_history"),
+            open_recalls=result.get("recalls") or [],
         )
     else:
         out["plate_confirmed"] = False

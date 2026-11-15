@@ -199,6 +199,12 @@
         <span class="plate">{{ plate.plate | plate }}</span>
         {% if plate.status == "confirmed" %}<span class="badge ok">Confirmed in the vehicle registry</span>
         {% else %}<span class="badge">Not in the registry dataset</span>{% endif %}
+        {% if plate.warnings %}
+        <h3 style="font-size:14px; margin:14px 0 6px">Registry warnings</h3>
+        <ul class="findings">{% for item in plate.warnings %}<li class="impact-high" dir="auto">{{ item }}</li>{% endfor %}</ul>
+        {% elif plate.vehicle_history is defined %}
+        <p class="muted" style="margin:10px 0 0">Registry check: no structural change, gas conversion, colour or tyre change, and no open recall.</p>
+        {% endif %}
         {% if plate.discrepancies %}
         <h3 style="font-size:14px; margin:14px 0 6px">Ad vs registry</h3>
         <ul class="findings">{% for item in plate.discrepancies %}<li class="impact-medium">{{ item }}</li>{% endfor %}</ul>
