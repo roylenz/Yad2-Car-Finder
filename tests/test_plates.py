@@ -293,7 +293,7 @@ class PlatePipelineTests(StoreTestCase):
         changes = {
             "mispar_rechev": 13107604, "kilometer_test_aharon": 41250, "shinui_mivne_ind": 1,
             "gapam_ind": 0, "shnui_zeva_ind": 1, "shinui_zmig_ind": 0,
-            "rishum_rishon_dt": "2024-03-01", "mkoriut_nm": "",
+            "rishum_rishon_dt": "2024-03-01", "mkoriut_nm": "החכר",
         }
         recall = {
             "MISPAR_RECHEV": 13107604, "RECALL_ID": 15781, "SUG_RECALL": "תקלה סידרתית בטיחותית",
@@ -320,11 +320,15 @@ class PlatePipelineTests(StoreTestCase):
         self.assertTrue(result["vehicle_history"]["structural_change"])
         self.assertEqual(result["recalls"][0]["fault"], "נוזל בלמים עלול לדלוף")
         warnings = result["warnings"]
-        self.assertEqual(len(warnings), 4)
+        self.assertEqual(len(warnings), 5)
         self.assertIn("structural change", warnings[0])
         self.assertIn("repainted", warnings[1])
-        self.assertIn("Ad says 30,000 km, but the registry recorded 41,250 km", warnings[2])
-        self.assertIn("Recall not done yet (opened 2025-02-03)", warnings[3])
+        self.assertEqual("Registry origin: came from a leasing company (החכר)", warnings[2])
+        self.assertIn("Ad says 30,000 km, but the registry recorded 41,250 km", warnings[3])
+        self.assertIn("Recall not done yet (opened 2025-02-03)", warnings[4])
+        # Rounded down to the thousand is not a warning.
+        rounded = plates.registry_warnings(limo(FIRST, km=41000), result["vehicle_history"], [])
+        self.assertFalse(any("km" in warning for warning in rounded))
 
         page = TestClient(create_app(self.state.engine, self.store, auth.NoAuth())).get("/ads/limo0001").text
         self.assertIn("Registry warnings", page)

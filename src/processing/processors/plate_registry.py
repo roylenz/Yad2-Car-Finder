@@ -23,8 +23,8 @@ class PlateRegistryProcessor(Processor):
     name = "plate_registry"
     # 3: rejected plates keep their registry record; 4: hands and original owner compared;
     # 5: change history (structural, gas, colour, tyres, test mileage) and open recalls;
-    # 6: the importer's list price when new
-    version = "6"
+    # 6: the importer's list price when new; 7: mileage rounding and origin wording
+    version = "7"
     target = "ad"
     requires = ("plate_reader",)
 

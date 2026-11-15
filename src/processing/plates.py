@@ -286,6 +286,11 @@ async def new_price(client: httpx.AsyncClient, record: dict) -> dict | None:
     }
 
 
+KM_ROUNDING = 1000
+ORIGINS = {"החכר": "came from a leasing company", "יבוא אישי-משומש": "personal import, used",
+           "יבוא אישי": "personal import"}
+
+
 def registry_warnings(listing: CarListing, history: dict | None, recalls: list[dict]) -> list[str]:
     """Red flags from the registry's change history and open recalls, worded for the buyer."""
     warnings = []
@@ -299,9 +304,13 @@ def registry_warnings(listing: CarListing, history: dict | None, recalls: list[d
         if history["tyre_change"]:
             warnings.append("Registry records a tyre change from the original specification")
         if history["origin"]:
-            warnings.append(f"Registry origin: {history['origin']}")
+            meaning = ORIGINS.get(history["origin"])
+            warnings.append(
+                f"Registry origin: {meaning} ({history['origin']})" if meaning else f"Registry origin: {history['origin']}"
+            )
         registry_km = history["km_at_last_test"]
-        if registry_km and listing.km is not None and listing.km < registry_km:
+        # Sellers round mileage down to the thousand: only a bigger gap is suspicious.
+        if registry_km and listing.km is not None and listing.km < registry_km - KM_ROUNDING:
             warnings.append(
                 f"Ad says {listing.km:,} km, but the registry recorded {registry_km:,} km at the last "
                 "test: the odometer was turned back or the ad is wrong"
