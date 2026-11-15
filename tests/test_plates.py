@@ -274,6 +274,37 @@ class PlatePipelineTests(StoreTestCase):
         self.assertIn("/ads/limo0002", listing)
         self.assertIn("Reposted ×1", listing)
 
+    def test_ad_is_checked_again_when_the_seller_adds_photos(self):
+        from storage.db import utcnow
+        from storage.schema import photos
+
+        self.state.ads.record([limo(FIRST, images=(f"{FIRST}/stock.jpg",))])
+        (stock,) = self.store_photos(["red"])
+        client = httpx.AsyncClient(transport=registry_transport({13107604: RECORD}))
+        reader = FakePlateReader({stock: []})
+        registry = PlateRegistryProcessor(client)
+        asyncio.run(ProcessingRunner(self.state.engine, self.store, [reader, registry]).run_pending())
+        self.assertEqual(asyncio.run(ProcessingRunner(self.state.engine, self.store, [reader, registry]).run_pending()), 0)
+
+        # The seller swaps the stock picture for real photos showing the plate.
+        self.state.ads.record([limo(FIRST, images=(f"{FIRST}/real.jpg",))], utcnow())
+        with self.state.engine.connect() as db:
+            rows = db.execute(select(photos.c.id, photos.c.removed_from_ad_at).order_by(photos.c.id)).all()
+        self.assertIsNotNone(rows[0].removed_from_ad_at)
+        sha, key = asyncio.run(self.store.save(jpeg("blue"), ".jpg"))
+        self.state.ads.photo_stored(rows[1].id, sha, key, 10)
+        reader.readings[sha] = [reading("13107604")]
+
+        asyncio.run(ProcessingRunner(self.state.engine, self.store, [reader, registry]).run_pending())
+        with self.state.engine.connect() as db:
+            row = db.execute(select(ads.c.plate, ads.c.plate_status)).one()
+            result = db.execute(
+                select(analysis_results.c.result).where(analysis_results.c.processor == "plate_registry")
+            ).scalar_one()
+        self.assertEqual(tuple(row), ("13107604", "confirmed"))
+        self.assertEqual(result["photos_with_plate"], 1)  # the replaced stock picture is left out
+        self.assertEqual(asyncio.run(ProcessingRunner(self.state.engine, self.store, [reader, registry]).run_pending()), 0)
+
     def test_ad_waits_for_photo_results_and_rejects_a_different_car(self):
         self.state.ads.record([limo(FIRST, images=(f"{FIRST}/a.jpg",))])
         (red,) = self.store_photos(["red"])

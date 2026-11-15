@@ -5,7 +5,8 @@ To add a model (e.g. licence-plate recognition):
    Run heavy, blocking work with `asyncio.to_thread` so the bot stays responsive.
 2. Register it in `processing/registry.py` and list its name in the `PROCESSORS` env var.
 The runner processes every archived target once per processor version. Bump `version` to
-re-run over the whole archive. Results appear on the dashboard's ad page.
+re-run over the whole archive. An ad processor also re-runs on an ad that gained photos after
+its result was saved, and sees only the ad's current photos (not ones the seller replaced). Results appear on the dashboard's ad page.
 
 Optional hooks:
 - `requires`: photo processors whose results an ad processor needs. The ad waits until each of

@@ -1,4 +1,6 @@
-"""Runs enabled processors over archived ads and photos that have no result for their version."""
+"""Runs enabled processors over archived ads and photos that have no result for their version.
+
+Ad processors also run again when the ad gained photos after their result was saved."""
 
 from collections.abc import Callable
 
@@ -16,18 +18,27 @@ MAX_DOWNLOAD_ATTEMPTS = 5
 
 
 def _finished(processor: Processor, target_id_column):
-    return exists().where(
-        and_(
-            analysis_results.c.target_type == processor.target,
-            analysis_results.c.target_id == target_id_column,
-            analysis_results.c.processor == processor.name,
-            analysis_results.c.version == processor.version,
-            or_(
-                analysis_results.c.status == "ok",
-                analysis_results.c.attempts >= MAX_ATTEMPTS,
-            ),
+    conditions = [
+        analysis_results.c.target_type == processor.target,
+        analysis_results.c.target_id == target_id_column,
+        analysis_results.c.processor == processor.name,
+        analysis_results.c.version == processor.version,
+        or_(
+            analysis_results.c.status == "ok",
+            analysis_results.c.attempts >= MAX_ATTEMPTS,
+        ),
+    ]
+    if processor.target == "ad":
+        # An ad whose seller added photos since (say real ones in place of stock pictures)
+        # is checked again, so a plate or damage in the new photos is found.
+        conditions.append(
+            ~exists().where(
+                photos.c.token == target_id_column,
+                photos.c.removed_from_ad_at.is_(None),
+                photos.c.first_seen_at > analysis_results.c.created_at,
+            )
         )
-    )
+    return exists().where(and_(*conditions))
 
 
 def pending_conditions(processor: Processor) -> list:
@@ -143,10 +154,13 @@ class ProcessingRunner:
             targets = []
             for token in tokens:
                 ad_photos = db.execute(
-                    select(photos.c.sha256, photos.c.path)
+                    select(photos.c.sha256, photos.c.path, photos.c.removed_from_ad_at)
                     .where(photos.c.token == token, photos.c.sha256.is_not(None))
-                    .order_by(photos.c.position)
+                    .order_by(photos.c.position, photos.c.id)
                 ).all()
+                # Photos the seller replaced are not this ad's any more (often stock pictures).
+                current = [row for row in ad_photos if row.removed_from_ad_at is None]
+                ad_photos = current or ad_photos
                 photo_results: dict[str, dict[str, dict]] = {}
                 if processor.requires and ad_photos:
                     for row in db.execute(

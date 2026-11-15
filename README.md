@@ -184,7 +184,9 @@ Processors live in `src/processing/processors/`. Subclass `processing.base.Proce
 all its photos), implement `async run(target) -> dict`, register the class in
 `src/processing/registry.py`, and add its name to `PROCESSORS`. Every archived target is
 processed once per version (failures are retried up to 3 times), so bumping `version` re-runs
-it over the whole archive. `photo_info` is a minimal example.
+it over the whole archive. Ad processors also run again on an ad that gained photos after their
+result was saved (a seller swapping Yad2's stock pictures for real ones that show the plate), and
+see only the ad's current photos. `photo_info` is a minimal example.
 
 Optional hooks: `requires` (photo processors an ad processor waits for; their results arrive
 in `AdTarget.photo_results`), `active_only` (skip removed ads), `apply(db, target_id, result)`
