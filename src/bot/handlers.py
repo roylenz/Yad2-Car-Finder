@@ -357,7 +357,7 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     await update.message.reply_text(
         "Which search should I stop?",
         reply_markup=build_stop_keyboard(
-            [(search.id, describe_search(search.url)) for search in chat_searches]
+            [(search.id, search.label) for search in chat_searches]
         ),
     )
     return ConversationHandler.END
@@ -381,11 +381,13 @@ async def stop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     stop_search(context, search.id)
     left = len(chat_searches) - 1
     await query.edit_message_text(
-        f"⏹️ Stopped: {describe_search(search.url)}\n{_count_text(left)}".rstrip()
+        f"⏹️ Stopped: {search.label}\n{_count_text(left)}".rstrip()
     )
 
 
 def stop_search(context: ContextTypes.DEFAULT_TYPE, search_id: int) -> None:
+    for link in scanner.state.links(search_id):
+        unschedule_scan(context.job_queue, link.id)
     unschedule_scan(context.job_queue, search_id)
     scanner.state.stop_search(search_id)
 
@@ -406,11 +408,14 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     for number, search in enumerate(chat_searches, 1):
         interval = search.interval_minutes
         interval_text = f"every {interval} minutes" if interval else "one-time scan"
+        links = scanner.state.links(search.id)
+        seen = sum(scanner.get_seen_count(item.id) for item in [search, *links])
+        extra = "".join(f"\n🔗 {link.url}" for link in links)
         blocks.append(
-            f"{number}. {describe_search(search.url)}\n"
-            f"📊 {scanner.get_seen_count(search.id)} cars found · ⏱️ {interval_text}\n"
+            f"{number}. {search.label}\n"
+            f"📊 {seen} cars found · ⏱️ {interval_text}\n"
             f"🔄 {scanner.queue_status(search.id)}\n"
-            f"🔗 {search.url}"
+            f"🔗 {search.url}{extra}"
         )
     heading = "Your search:" if len(chat_searches) == 1 else f"Your {len(chat_searches)} searches:"
     await update.message.reply_text(heading + "\n\n" + "\n\n".join(blocks))
@@ -426,7 +431,7 @@ async def url_search_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     chat_id = update.effective_chat.id
     chat_searches = scanner.state.chat_searches(chat_id)
-    if any(search.url == search_url for search in chat_searches):
+    if search_url in scanner.state.chat_urls(chat_id):
         await update.message.reply_text("You're already tracking this search. Use /status to see it.")
         return ConversationHandler.END
     if len(chat_searches) >= MAX_SEARCHES_PER_CHAT:

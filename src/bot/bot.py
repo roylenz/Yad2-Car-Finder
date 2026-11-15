@@ -92,16 +92,25 @@ def _interval_seconds(job) -> float | None:
 
 async def _sync_job(context) -> None:
     for search in scanner.state.searches_added_on_dashboard():
-        await context.bot.send_message(
-            search.chat_id,
-            f"✅ Search added on the dashboard: {describe_search(search.url)}. "
-            f"I'll check it every {search.interval_minutes} minutes.",
-        )
+        if search.parent_id is not None:
+            main = scanner.state.main_search(search)
+            text = (
+                f"✅ Link added on the dashboard to {main.label}: {describe_search(search.url)}. "
+                f"I'll check it every {search.interval_minutes} minutes."
+            )
+        else:
+            text = (
+                f"✅ Search added on the dashboard: {search.label}. "
+                f"I'll check it every {search.interval_minutes} minutes."
+            )
+        await context.bot.send_message(search.chat_id, text)
     _, changed = sync_searches(context.job_queue)
     for search in changed:
+        if search.parent_id is not None:
+            continue  # links follow their search, which is announced
         await context.bot.send_message(
             search.chat_id,
-            f"⏱ {describe_search(search.url)}: now checked every {search.interval_minutes} minutes.",
+            f"⏱ {search.label}: now checked every {search.interval_minutes} minutes.",
         )
 
 

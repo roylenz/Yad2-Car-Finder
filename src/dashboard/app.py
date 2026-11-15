@@ -154,6 +154,8 @@ def _change_summary(changes: dict | None) -> str:
 
 SEARCH_INTERVALS = (5, 10, 15, 30, 60)
 MAX_SEARCHES_PER_CHAT = int(os.getenv("MAX_SEARCHES_PER_CHAT", "5"))
+MAX_LINKS_PER_SEARCH = 5  # extra Yad2 links under one search
+MAX_NAME_LENGTH = 60
 
 
 def _phone(number: str | None) -> str:
@@ -223,8 +225,10 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
             params = request.query_params
             value = params["search"] if "search" in params else request.cookies.get(SEARCH_COOKIE, "")
             search_id = _search_id(value)
-            if search_id is not None and search_store.get_search(search_id) is None:
-                search_id = None  # stopped since
+            if search_id is not None:
+                search = search_store.get_search(search_id)
+                # None when stopped since; a link's pages are its search's.
+                search_id = search_store.main_search(search).id if search else None
             request.state.search_id = search_id
         return request.state.search_id
 
@@ -292,13 +296,46 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
         if interval not in SEARCH_INTERVALS:
             return RedirectResponse(f"/scans?{urlencode({'error': 'Pick one of the listed intervals.'})}", status_code=303)
         chat_searches = search_store.chat_searches(chat_id)
-        if any(item.url == url for item in chat_searches):
+        if url in search_store.chat_urls(chat_id):
             return RedirectResponse(f"/scans?{urlencode({'error': 'That chat already tracks this search.'})}", status_code=303)
         if len(chat_searches) >= MAX_SEARCHES_PER_CHAT:
             message = f"Chat {chat_id} already has {MAX_SEARCHES_PER_CHAT} searches. Stop one first."
             return RedirectResponse(f"/scans?{urlencode({'error': message})}", status_code=303)
-        search_store.add_search(chat_id, url, interval, added_from="dashboard")
-        message = f"Added: {describe_search(url)}. The bot starts scanning it within a minute."
+        search, _created = search_store.add_search(chat_id, url, interval, added_from="dashboard")
+        name = form.get("name", "").strip()[:MAX_NAME_LENGTH]
+        if name:
+            search = search_store.rename(search.id, name)
+        message = f"Added: {search.label}. The bot starts scanning it within a minute."
+        return RedirectResponse(f"/scans?{urlencode({'notice': message})}", status_code=303)
+
+    @pages.post("/searches/{search_id}/links")
+    async def add_link(request: Request, search_id: int):
+        _same_origin(request)
+        form = dict(parse_qsl((await request.body()).decode()))
+        search = search_store.get_search(search_id)
+        if search is None:
+            raise HTTPException(404, "Search not found")
+        if len(search_store.links(search_id)) >= MAX_LINKS_PER_SEARCH:
+            message = f"{search.label} already has {MAX_LINKS_PER_SEARCH} extra links. Remove one first."
+            return RedirectResponse(f"/scans?{urlencode({'error': message})}", status_code=303)
+        try:
+            link = search_store.add_link(search_id, normalize_search_url(form.get("url", "")))
+        except ValueError as error:
+            return RedirectResponse(f"/scans?{urlencode({'error': str(error) or 'Fill in the link.'})}", status_code=303)
+        message = (
+            f"Added {describe_search(link.url)} to {search.label}. "
+            "The bot starts scanning it within a minute."
+        )
+        return RedirectResponse(f"/scans?{urlencode({'notice': message})}", status_code=303)
+
+    @pages.post("/searches/{search_id}/name")
+    async def rename_search(request: Request, search_id: int):
+        _same_origin(request)
+        form = dict(parse_qsl((await request.body()).decode()))
+        search = search_store.rename(search_id, form.get("name", "")[:MAX_NAME_LENGTH])
+        if search is None:
+            raise HTTPException(404, "Search not found")
+        message = f"Renamed to {search.label}." if search.name else f"Name cleared: {search.label}."
         return RedirectResponse(f"/scans?{urlencode({'notice': message})}", status_code=303)
 
     @pages.post("/searches/{search_id}/interval")
@@ -312,7 +349,7 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
         if search is None:
             raise HTTPException(404, "Search not found")
         message = (
-            f"{describe_search(search.url)}: now every {interval} minutes. "
+            f"{search.label}: now every {interval} minutes. "
             "The bot switches within a minute and tells the chat."
         )
         return RedirectResponse(f"/scans?{urlencode({'notice': message})}", status_code=303)
@@ -324,7 +361,12 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
         if search is None:
             raise HTTPException(404, "Search not found")
         search_store.stop_search(search_id)
-        message = f"Stopped: {describe_search(search.url)}. Its ads stay in the catalog."
+        if search.parent_id is not None:
+            parent = search_store.get_search(search.parent_id)
+            owner = f" from {parent.label}" if parent else ""
+            message = f"Removed {describe_search(search.url)}{owner}. Its ads stay in the catalog."
+        else:
+            message = f"Stopped: {search.label}. Its ads stay in the catalog."
         return RedirectResponse(f"/scans?{urlencode({'notice': message})}", status_code=303)
 
     @pages.get("/background", response_class=HTMLResponse)

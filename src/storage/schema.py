@@ -29,8 +29,12 @@ searches = Table(
     Column("created_at", DateTime),
     Column("added_from", String(16)),  # "telegram" or "dashboard"
     Column("announced_at", DateTime),  # when the bot told the chat about a dashboard search
+    # Set on an extra link of another search: scanned on its own, shown as part of that search.
+    Column("parent_id", Integer),
+    Column("name", Text),  # chosen on the dashboard; else the search is described from its link
     UniqueConstraint("chat_id", "url", name="uq_searches_chat_url"),
     Index("ix_searches_chat", "chat_id"),
+    Index("ix_searches_parent", "parent_id"),
 )
 
 # Which ads were in each search's results on its last scan (to notice ads that leave them).

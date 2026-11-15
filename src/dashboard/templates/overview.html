@@ -23,7 +23,7 @@
 <div class="card">
   {% for search in searches %}
   <div>
-    {% if searches | length > 1 %}<strong>{{ search.description }}</strong> ·{% endif %}
+    {% if searches | length > 1 %}<strong>{{ search.label }}</strong> ·{% endif %}
     {% if search.active and search.active.status == "running" %}
       <span class="badge running">Scanning</span> {{ search.active.progress or "" }}
       <span class="muted">· started {{ search.active.started_at | local }}</span>

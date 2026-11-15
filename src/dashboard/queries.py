@@ -1,7 +1,7 @@
 """Read-only queries behind the dashboard pages."""
 
 import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy import Engine, and_, case, exists, func, or_, select, true
 
@@ -27,8 +27,14 @@ def _market_since():
     )
 
 
+def _search_group(search_id: int):
+    """The ids of a search and its extra links."""
+    return select(searches.c.id).where(or_(searches.c.id == search_id, searches.c.parent_id == search_id))
+
+
 def _in_search(search_id: int | None) -> list:
-    """Conditions keeping only cars a search found (any of the car's ads); none for all searches."""
+    """Conditions keeping only cars a search or its extra links found (any of the car's ads);
+    none for all searches."""
     if search_id is None:
         return []
     found = ads.alias("found")
@@ -36,7 +42,7 @@ def _in_search(search_id: int | None) -> list:
         _car_key(ads).in_(
             select(_car_key(found))
             .join(search_ads, search_ads.c.token == found.c.token)
-            .where(search_ads.c.search_id == search_id)
+            .where(search_ads.c.search_id.in_(_search_group(search_id)))
         )
     ]
 
@@ -529,10 +535,18 @@ class SearchStatus:
     added_from: str | None
     active: object | None  # the queued or running scan, if any
     last: object | None  # the latest finished scan
+    name: str | None = None
+    parent_id: int | None = None
+    links: list["SearchStatus"] = field(default_factory=list)  # the search's extra links
+
+    @property
+    def label(self) -> str:
+        return self.name or self.description
 
 
 def search_statuses(engine: Engine) -> list[SearchStatus]:
-    """Every saved search with its next scheduled scan, current scan and latest result."""
+    """Every saved search with its next scheduled scan, current scan and latest result; extra
+    links are listed under their search."""
     with engine.connect() as db:
         rows = db.execute(select(searches).order_by(searches.c.chat_id, searches.c.id)).all()
         statuses = []
@@ -550,17 +564,25 @@ def search_statuses(engine: Engine) -> list[SearchStatus]:
             statuses.append(
                 SearchStatus(
                     row.id, row.chat_id, row.url, describe_search(row.url), row.interval_minutes,
-                    row.next_scan_at, row.added_from, active, last,
+                    row.next_scan_at, row.added_from, active, last, row.name, row.parent_id,
                 )
             )
-    return statuses
+    by_id = {status.id: status for status in statuses}
+    for status in statuses:
+        if status.parent_id in by_id:
+            by_id[status.parent_id].links.append(status)
+    return [status for status in statuses if status.parent_id not in by_id]
 
 
 def search_choices(engine: Engine) -> list[tuple[int, str]]:
-    """(id, label) of every saved search, for the dashboard's search picker."""
+    """(id, label) of every saved search (not their extra links), for the search picker."""
     with engine.connect() as db:
-        rows = db.execute(select(searches.c.id, searches.c.url).order_by(searches.c.id)).all()
-    return [(row.id, describe_search(row.url)) for row in rows]
+        rows = db.execute(
+            select(searches.c.id, searches.c.url, searches.c.name)
+            .where(searches.c.parent_id.is_(None))
+            .order_by(searches.c.id)
+        ).all()
+    return [(row.id, row.name or describe_search(row.url)) for row in rows]
 
 
 def known_chats(engine: Engine) -> list[int]:
@@ -580,7 +602,7 @@ def scan_history(
     if chat_id is not None:
         statement = statement.where(scans.c.chat_id == chat_id)
     if search_id is not None:
-        statement = statement.where(scans.c.search_id == search_id)
+        statement = statement.where(scans.c.search_id.in_(_search_group(search_id)))
     with engine.connect() as db:
         return db.execute(statement).all()
 

@@ -16,6 +16,18 @@
   form.interval-form { display: inline; }
   form.interval-form select { font: inherit; font-size: 13px; padding: 1px 4px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); }
   form button.stop { color: var(--critical); border-color: var(--critical); cursor: pointer; font-size: 13px; padding: 3px 10px; }
+  form.inline-form { display: flex; gap: 6px; margin-top: 8px; }
+  form.inline-form input {
+    flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 3px 8px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
+  }
+  form.inline-form button { font-size: 13px; padding: 3px 10px; cursor: pointer; }
+  .search-name { font-weight: 600; }
+  .search-name input { font-weight: 600; }
+  ul.links { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 6px; }
+  ul.links li { border-top: 1px solid var(--border); padding-top: 6px; font-size: 13px; }
+  ul.links form { display: inline; }
+  ul.links button.stop { padding: 1px 8px; font-size: 12px; }
 </style>
 {% endblock %}
 {% block content %}
@@ -23,9 +35,11 @@
 <p class="muted">Times are Israel time. This page refreshes every 20 seconds while you're not typing a search.</p>
 <script>
   setInterval(() => {
-    const field = document.querySelector("form.add-search input[name=url]");
-    const choosing = document.activeElement && document.activeElement.tagName === "SELECT";
-    if (!choosing && (!field || (!field.value && document.activeElement !== field))) location.reload();
+    const active = document.activeElement;
+    const busy = active && (active.tagName === "SELECT" || active.tagName === "INPUT");
+    const typed = [...document.querySelectorAll("input[name=url], input[name=name]")]
+      .some(field => field.value !== field.defaultValue);
+    if (!busy && !typed) location.reload();
   }, 20000);
 </script>
 
@@ -39,7 +53,11 @@
 <div class="tiles">
 {% for search in searches %}
   <div class="card">
-    <div style="font-weight:600" dir="auto">{{ search.description }}</div>
+    <form method="post" action="/searches/{{ search.id }}/name" class="inline-form search-name" style="margin-top:0">
+      <input name="name" value="{{ search.name or "" }}" placeholder="{{ search.description }}" maxlength="60" dir="auto" aria-label="Search name">
+      <button type="submit">Rename</button>
+    </form>
+    {% if search.name %}<div class="muted" style="font-size:13px" dir="auto">{{ search.description }}</div>{% endif %}
     <div class="secondary">Chat {{ search.chat_id }} ·
       <form method="post" action="/searches/{{ search.id }}/interval" class="interval-form">
         <label>every
@@ -52,7 +70,8 @@
         <noscript><button type="submit">Save</button></noscript>
       </form> ·
       <a href="{{ search.url }}" target="_blank" rel="noopener">search on Yad2</a> ·
-      <a href="/scans?search={{ search.id }}">history</a></div>
+      <a href="/scans?search={{ search.id }}">history</a>
+      {% if search.links %}· <a href="/market?search={{ search.id }}">market</a>{% endif %}</div>
     {% if search.active and search.active.status == "running" %}
       <div style="margin-top:8px"><span class="badge running">Scanning</span>
         for {{ duration(search.active.started_at) }}</div>
@@ -74,8 +93,29 @@
     <div class="muted" style="margin-top:4px">Last scan {{ search.last.status }}, {{ search.last.finished_at | when }}
       {% if search.last.status == "ok" %}· {{ search.last.results | number }} results{% endif %}</div>
     {% endif %}
+    {% if search.links %}
+    <ul class="links">
+      {% for link in search.links %}
+      <li>
+        <span dir="auto">+ {{ link.description }}</span> ·
+        <a href="{{ link.url }}" target="_blank" rel="noopener">on Yad2</a> ·
+        {% if link.active and link.active.status == "running" %}<span class="badge running">Scanning</span>
+        {% elif link.active %}<span class="badge queued">Queued</span>
+        {% elif link.last %}<span class="muted">last scan {{ link.last.status }}, {{ link.last.finished_at | when }}{% if link.last.status == "ok" %} · {{ link.last.results | number }} results{% endif %}</span>
+        {% else %}<span class="muted">not scanned yet</span>{% endif %}
+        <form method="post" action="/searches/{{ link.id }}/stop">
+          <button type="submit" class="stop">Remove</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    <form method="post" action="/searches/{{ search.id }}/links" class="inline-form">
+      <input type="url" name="url" required placeholder="Add another Yad2 link to this search" dir="ltr" aria-label="Another Yad2 link">
+      <button type="submit">Add link</button>
+    </form>
     <form method="post" action="/searches/{{ search.id }}/stop" style="margin-top:10px">
-      <button type="submit" class="stop">Stop this search</button>
+      <button type="submit" class="stop">Stop this search{% if search.links %} and its links{% endif %}</button>
     </form>
   </div>
 {% endfor %}
@@ -86,6 +126,9 @@
   <form method="post" action="/searches" class="add-search">
     <label>Yad2 search link
       <input type="url" name="url" required placeholder="https://www.yad2.co.il/vehicles/cars?…" dir="ltr">
+    </label>
+    <label>Name <span class="muted">(optional)</span>
+      <input name="name" maxlength="60" placeholder="Described from the link when empty" dir="auto">
     </label>
     <div class="row">
       <label>Alerts go to
@@ -101,7 +144,7 @@
       <button type="submit">Add search</button>
     </div>
   </form>
-  <p class="muted" style="margin:8px 0 0">Set the filters on Yad2, copy the results page's address and paste it here. The bot announces the search in the chat and scans it within a minute.</p>
+  <p class="muted" style="margin:8px 0 0">Set the filters on Yad2, copy the results page's address and paste it here. To cover more makes or filters in the same search, add more links to it above. The bot announces the search in the chat and scans it within a minute.</p>
 </div>
 
 <h2>History{% if chat is not none %} · chat {{ chat }} <a href="/scans" class="muted">(all)</a>{% endif %}{% if search_filter is not none %} · one search <a href="/scans?search=" class="muted">(all)</a>{% endif %}</h2>

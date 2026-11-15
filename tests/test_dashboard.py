@@ -170,6 +170,57 @@ class DashboardTests(unittest.TestCase):
         self.state.stop_search(electric.id)
         self.assertIn("טויוטה קורולה", self.client.get("/ads?status=all").text)  # stopped: back to all
 
+    def test_a_search_can_be_named_and_get_more_links(self):
+        corolla = self.state.chat_searches(1)[0]
+        electric, _ = self.state.add_search(1, "https://www.yad2.co.il/vehicles/cars?carTag=6&price=1-100000", 10)
+        tesla_url = "https://www.yad2.co.il/vehicles/cars?manufacturer=36&price=1-120000"
+
+        renamed = self.client.post(f"/searches/{electric.id}/name", data={"name": "  Family EV "})
+        self.assertIn("Renamed to Family EV", renamed.text)
+        self.assertEqual(self.state.get_search(electric.id).label, "Family EV")
+        self.assertIn("Family EV", self.client.get("/ads").text)  # the picker uses the name
+
+        added = self.client.post(f"/searches/{electric.id}/links", data={"url": tesla_url + "&page=3"})
+        self.assertIn("to Family EV", added.text)
+        (link,) = self.state.links(electric.id)
+        self.assertEqual((link.url, link.chat_id, link.interval_minutes), (tesla_url, 1, 10))
+        self.assertEqual(self.state.chat_searches(1), [corolla, self.state.get_search(electric.id)])
+        self.assertIn("already tracks this link", self.client.post(
+            f"/searches/{electric.id}/links", data={"url": tesla_url}).text)
+        self.assertIn("already tracks this search", self.client.post(
+            "/searches", data={"url": tesla_url, "chat": "1", "interval": "10"}).text)
+
+        # The link's cars count as the search's on every page.
+        car = CarListing(
+            "https://www.yad2.co.il/vehicles/item/tesla1", "טסלה מודל 3", 95000, 30000,
+            year=2023, manufacturer="טסלה", model="מודל 3",
+        )
+        AdTracker(self.state.ads).apply(1, link.id, ScanOutput([car]))
+        for path in ("/ads?status=all", "/market", "/"):
+            with self.subTest(path=path):
+                page = self.client.get(f"{path}{'&' if '?' in path else '?'}search={electric.id}").text
+                self.assertIn("טסלה", page)
+                self.assertNotIn("טויוטה", page)
+        self.assertIn("טסלה", self.client.get(f"/ads?status=all&search={link.id}").text)  # a link means its search
+
+        scans = self.client.get("/scans").text
+        self.assertIn('value="Family EV"', scans)
+        self.assertIn(f'action="/searches/{link.id}/stop"', scans)
+        self.assertIn("Stop this search and its links", scans)
+
+        # Interval changes and stopping cover the links.
+        self.client.post(f"/searches/{electric.id}/interval", data={"interval": "30"})
+        self.assertEqual(self.state.get_search(link.id).interval_minutes, 30)
+        removed = self.client.post(f"/searches/{link.id}/stop")
+        self.assertIn("from Family EV", removed.text)
+        self.assertEqual(self.state.links(electric.id), [])
+        self.state.add_link(electric.id, tesla_url)
+        self.state.stop_search(electric.id)
+        self.assertEqual(self.state.chat_urls(1), {corolla.url})
+
+        cleared = self.client.post(f"/searches/{corolla.id}/name", data={"name": ""})
+        self.assertIn("Name cleared", cleared.text)
+
     def test_background_page_shows_live_status_and_backlog(self):
         from storage.background_status import StatusBoard
         from tracking.background import BackgroundPipeline

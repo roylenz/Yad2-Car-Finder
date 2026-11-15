@@ -299,11 +299,12 @@ class Scanner:
             await self._send_safe(context, chat_id, f"No new cars or price drops found{label}.")
 
     def _label(self, search: Search) -> str:
-        """' in <search>' when the chat has several searches, so alerts say which one."""
-        searches = self.state.chat_searches(search.chat_id)
-        if len(searches) < 2:
+        """' in <search>' when the chat has several searches (or the search was named), so
+        alerts say which one. An extra link's alerts name the search it belongs to."""
+        main = self.state.main_search(search)
+        if main.name is None and len(self.state.chat_searches(search.chat_id)) < 2:
             return ""
-        return f" in {describe_search(search.url)}"
+        return f" in {main.label}"
 
     def is_scanning(self) -> bool:
         return bool(self._running)
