@@ -4,7 +4,7 @@ import os
 
 import anthropic
 
-from processing.processors.claude_condition import PRICES
+from processing.processors import claude_condition
 
 DEFAULT_MODEL = "claude-opus-5-5"
 # On a safety decline, the API retries on the model Anthropic picks for that category.
@@ -20,11 +20,16 @@ def client() -> anthropic.Anthropic:
 
 
 def cost_usd(response) -> float:
-    usage = response.usage
-    price_in, price_out = PRICES.get(response.model, PRICES[DEFAULT_MODEL])
-    fresh = (usage.input_tokens or 0) + (getattr(usage, "cache_creation_input_tokens", 0) or 0) * 1.25
-    cached = getattr(usage, "cache_read_input_tokens", 0) or 0
-    return (fresh * price_in + cached * price_in * 0.1 + (usage.output_tokens or 0) * price_out) / 1e6
+    return claude_condition.cost_usd(response, DEFAULT_MODEL)
+
+
+CACHED = {"type": "ephemeral"}  # marks the end of a prompt part worth caching (kept 5 minutes)
+
+
+def cached_text(text: str) -> dict:
+    """A text block that ends a cached part of the prompt: a later request that starts with
+    the same text up to here reads it at the cache price."""
+    return {"type": "text", "text": text, "cache_control": CACHED}
 
 
 def check(response) -> None:

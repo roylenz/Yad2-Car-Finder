@@ -90,12 +90,18 @@ def build(facts: dict, budget: int, client=None, research: str | None = None) ->
     request = "Car facts:\n" + json.dumps(facts, ensure_ascii=False, indent=1, default=str)
     if research:
         request += "\n\nOnline research:\n" + research
-    request += f"\n\nThe buyer's budget: ₪{budget:,}. Keep every price at or below that."
+    # Cached in two steps: the instructions (the same for every car), then this car's facts and
+    # research, so another brief for the car within 5 minutes (a different budget) pays the
+    # cache price for all but the budget line.
+    content = [
+        claude.cached_text(request),
+        {"type": "text", "text": f"The buyer's budget: ₪{budget:,}. Keep every price at or below that."},
+    ]
     response = (client or claude.client()).beta.messages.create(
         model=claude.model(),
         max_tokens=16000,
-        system=SYSTEM,
-        messages=[{"role": "user", "content": request}],
+        system=[claude.cached_text(SYSTEM)],
+        messages=[{"role": "user", "content": content}],
         output_config={"effort": "high", "format": {"type": "json_schema", "schema": SCHEMA}},
         **claude.FALLBACK,
     )

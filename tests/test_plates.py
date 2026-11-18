@@ -472,6 +472,7 @@ class ClaudeConditionTests(StoreTestCase):
         self.assertEqual(request["model"], "claude-sonnet-5-5")
         self.assertEqual(request["fallbacks"], "default")
         self.assertEqual(request["output_config"]["format"]["type"], "json_schema")
+        self.assertEqual(request["system"][0]["cache_control"], {"type": "ephemeral"})
         images = [block for block in request["messages"][0]["content"] if block["type"] == "image"]
         self.assertEqual(len(images), 2)
         self.assertIn("Advertised car: אי.וי איזי Limo", request["messages"][0]["content"][-1]["text"])

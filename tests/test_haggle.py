@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from bot.state import BotState
 from car.listing import CarListing, ScanOutput
 from haggle import brief as briefs
+from haggle import claude
 from haggle import facts as car_facts
 from haggle.call import CallAgent, SimulatedSeller
 from tracking.tracker import AdTracker
@@ -86,7 +87,14 @@ class HaggleTests(unittest.TestCase):
         brief = briefs.build(facts, budget=88000, client=client)
         self.assertEqual((brief["opening_offer"], brief["target_price"], brief["walk_away_price"]), (88000, 88000, 88000))
         request = client.requests[0]
-        self.assertIn("₪88,000", request["messages"][0]["content"])
+        # Cached up to the instructions and up to the car's facts; the budget comes after both.
+        self.assertEqual(request["system"], [claude.cached_text(briefs.SYSTEM)])
+        car, budget = request["messages"][0]["content"]
+        self.assertEqual(car["cache_control"], {"type": "ephemeral"})
+        self.assertIn("Car facts:", car["text"])
+        self.assertNotIn("88,000", car["text"])
+        self.assertIn("₪88,000", budget["text"])
+        self.assertNotIn("cache_control", budget)
         self.assertEqual(request["output_config"]["format"]["schema"], briefs.SCHEMA)
         self.assertIn("your budget ₪88,000", briefs.as_text(facts, brief))
 
@@ -140,6 +148,7 @@ class HaggleTests(unittest.TestCase):
         self.assertEqual(client.requests[0]["tools"][0]["name"], "web_search")
         self.assertEqual(client.requests[1]["messages"][1]["role"], "assistant")  # resumed, not restarted
         self.assertIn("2024", client.requests[0]["messages"][0]["content"])  # model year
+        self.assertEqual(client.requests[1]["cache_control"], {"type": "ephemeral"})  # reads the first part
         self.assertGreater(result["cost_usd"], 0.03)
 
         self.assertEqual(research.model_key(facts), "טויוטה-קורולה-2024")
@@ -156,7 +165,17 @@ class HaggleTests(unittest.TestCase):
 
         brief_client = FakeClient(_response(_text(json.dumps(BRIEF, ensure_ascii=False))))
         briefs.build(facts, 90000, client=brief_client, research=result["notes"])
-        self.assertIn("Online research:", brief_client.requests[0]["messages"][0]["content"])
+        self.assertIn("Online research:", brief_client.requests[0]["messages"][0]["content"][0]["text"])
+
+    def test_cost_counts_cache_writes_and_reads_at_their_prices(self):
+        response = _response()
+        response.usage = SimpleNamespace(
+            input_tokens=1000, output_tokens=100, cache_creation_input_tokens=2000, cache_read_input_tokens=10000
+        )
+        # Opus 5.5: $4 in, $20 out, cache writes 1.25x in, cache reads $0.20.
+        self.assertAlmostEqual(claude.cost_usd(response), (1000 * 4 + 2000 * 5 + 10000 * 0.2 + 100 * 20) / 1e6)
+        response.model = "claude-opus-5"  # no listed cache price: a tenth of its $5 input price
+        self.assertAlmostEqual(claude.cost_usd(response), (1000 * 5 + 2000 * 6.25 + 10000 * 0.5 + 100 * 25) / 1e6)
 
     def test_simulated_seller_keeps_its_lowest_price_secret_in_the_prompt(self):
         facts = car_facts.gather(self.state.engine, "target01")

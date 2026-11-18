@@ -89,6 +89,9 @@ def run(facts: dict, client=None) -> dict:
             system=SYSTEM.format(today=facts["today"]),
             messages=messages,
             tools=TOOLS,
+            # Caches up to the end of the request, so resuming a paused search reads the
+            # searches done so far from the cache instead of paying for them again.
+            cache_control=claude.CACHED,
             output_config={"effort": "low"},
             **claude.FALLBACK,
         )

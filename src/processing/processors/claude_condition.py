@@ -30,6 +30,9 @@ PRICES = {
     "claude-opus-5": (5.00, 25.00),
     "claude-haiku-5-5": (0.10, 0.50),
 }
+# $ per million input tokens read from the prompt cache; other models pay a tenth of their input price.
+CACHE_READ_PRICES = {"claude-sonnet-5-5": 0.10, "claude-opus-5-5": 0.20}
+CACHE_WRITE = 1.25  # writing the (5-minute) cache costs this many times the input price
 
 SYSTEM = """You inspect photos of a used car advertised for sale in Israel on Yad2, for a buyer \
 who wants to know what could lower the price or deserves a closer look before buying.
@@ -161,7 +164,9 @@ class ClaudeConditionProcessor(Processor):
         response = await client.beta.messages.create(
             model=self.model,
             max_tokens=8000,
-            system=SYSTEM,
+            # The instructions and answer format are the same for every ad, so ads checked within
+            # 5 minutes of each other read them from the cache. The photos differ per ad.
+            system=[{"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": content}],
             output_config={"effort": "medium", "format": {"type": "json_schema", "schema": SCHEMA}},
             # On a safety decline, retry on the model Anthropic picks for that category.
@@ -200,16 +205,30 @@ def _describe(target: AdTarget) -> str:
     return "\n".join(lines)
 
 
+def cost_usd(response, default_model: str = DEFAULT_MODEL) -> float:
+    """What a response cost: fresh input, cache writes and reads, and output, at the answering
+    model's prices."""
+    usage = response.usage
+    price_in, price_out = PRICES.get(response.model, PRICES[default_model])
+    price_read = CACHE_READ_PRICES.get(response.model, price_in * 0.1)
+    written = getattr(usage, "cache_creation_input_tokens", 0) or 0
+    read = getattr(usage, "cache_read_input_tokens", 0) or 0
+    return (
+        (usage.input_tokens or 0) * price_in
+        + written * price_in * CACHE_WRITE
+        + read * price_read
+        + (usage.output_tokens or 0) * price_out
+    ) / 1e6
+
+
 def _usage(response) -> dict:
     usage = response.usage
-    price_in, price_out = PRICES.get(response.model, PRICES[DEFAULT_MODEL])
-    input_tokens = (usage.input_tokens or 0) + (getattr(usage, "cache_creation_input_tokens", 0) or 0)
-    cached = getattr(usage, "cache_read_input_tokens", 0) or 0
-    cost = (input_tokens * price_in + cached * price_in * 0.1 + (usage.output_tokens or 0) * price_out) / 1e6
+    written = getattr(usage, "cache_creation_input_tokens", 0) or 0
     return {
-        "input_tokens": input_tokens,
-        "cache_read_tokens": cached,
+        "input_tokens": (usage.input_tokens or 0) + written,
+        "cache_write_tokens": written,
+        "cache_read_tokens": getattr(usage, "cache_read_input_tokens", 0) or 0,
         "output_tokens": usage.output_tokens,
-        "cost_usd": round(cost, 5),
+        "cost_usd": round(cost_usd(response), 5),
         "at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
     }
