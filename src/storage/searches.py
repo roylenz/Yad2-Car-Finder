@@ -163,6 +163,19 @@ class SearchStore:
             )
         return self.get_search(search_id)
 
+    def set_url(self, search_id: int, url: str) -> "Search":
+        """Change a search's (or extra link's) Yad2 link; its next scan uses it. Raises
+        ValueError when the search is gone or its chat already tracks that link."""
+        search = self.get_search(search_id)
+        if search is None:
+            raise ValueError("That search was stopped.")
+        if url != search.url:
+            if url in self.chat_urls(search.chat_id):
+                raise ValueError("That chat already tracks a search with these filters.")
+            with self.engine.begin() as db:
+                db.execute(update(searches).where(searches.c.id == search_id).values(url=url))
+        return self.get_search(search_id) or search
+
     def rename(self, search_id: int, name: str) -> "Search | None":
         """Name a search; an empty name goes back to describing it from its link."""
         with self.engine.begin() as db:

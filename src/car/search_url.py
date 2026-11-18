@@ -49,6 +49,47 @@ def with_price(search_url: str, low: int, high: int) -> str:
     return urlunsplit(parsed._replace(query=urlencode(params)))
 
 
+RANGE_FILTERS = ("price", "year", "km", "hand")  # `key=min-max` filters; -1 means no limit
+
+
+def range_filters(search_url: str) -> dict[str, tuple[int | None, int | None]]:
+    """The search's (min, max) for each of `RANGE_FILTERS`; None where it sets no limit."""
+    params = dict(parse_qsl(urlsplit(search_url).query))
+    ranges = {}
+    for key in RANGE_FILTERS:
+        match = re.fullmatch(r"(-1|\d+)-(-1|\d+)", params.get(key, ""))
+        low, high = (int(value) for value in match.groups()) if match else (-1, -1)
+        ranges[key] = (low if low >= 0 else None, high if high >= 0 else None)
+    return ranges
+
+
+def with_ranges(search_url: str, ranges: dict[str, tuple[int | None, int | None]]) -> str:
+    """The same search with the given `RANGE_FILTERS` set to (min, max); a filter given
+    (None, None) is dropped and ones not given are kept. Raises ValueError for a minimum above
+    its maximum, or when no filter would be left."""
+    for key, (low, high) in ranges.items():
+        if key not in RANGE_FILTERS:
+            raise ValueError(f"{key} is not a range filter.")
+        if low is not None and high is not None and low > high:
+            raise ValueError(f"{key.capitalize()}: the minimum ({low}) is above the maximum ({high}).")
+    values = {
+        key: f"{-1 if low is None else low}-{-1 if high is None else high}"
+        for key, (low, high) in ranges.items()
+        if low is not None or high is not None
+    }
+    parsed = urlsplit(search_url)
+    params = []
+    for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+        if key not in ranges:
+            params.append((key, value))
+        elif key in values:
+            params.append((key, values.pop(key)))
+    params.extend(values.items())
+    if not any(value for _, value in params):
+        raise ValueError("A search needs at least one filter.")
+    return urlunsplit(parsed._replace(query=urlencode(params)))
+
+
 def split_price(low: int, high: int, prices: list[int], parts: int = 2) -> list[tuple[int, int]]:
     """Cut `low..high` into up to `parts` ranges holding about as many known prices each
     (equal widths when no prices are known). The ranges are inclusive and cover `low..high`."""

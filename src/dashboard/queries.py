@@ -8,7 +8,7 @@ from sqlalchemy import Engine, and_, case, exists, func, or_, select, true
 from storage import cars
 from storage.db import utcnow
 from tracking.tracker import price_floor, search_max_price
-from car.search_url import describe_search
+from car.search_url import describe_search, range_filters
 from storage.schema import (
     access, ad_snapshots, admins, ads, analysis_results, chat_ads, photos, scans, search_ads, searches,
 )
@@ -542,6 +542,11 @@ class SearchStatus:
     @property
     def label(self) -> str:
         return self.name or self.description
+
+    @property
+    def ranges(self) -> dict[str, tuple[int | None, int | None]]:
+        """The link's price, year, km and hand limits, for the filters form."""
+        return range_filters(self.url)
 
 
 def search_statuses(engine: Engine) -> list[SearchStatus]:

@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 from PIL import Image
 from sqlalchemy import Engine
 
-from car.search_url import describe_search, normalize_search_url
+from car.search_url import RANGE_FILTERS, describe_search, normalize_search_url, with_ranges
 from dashboard import auth, fields, queries
 from processing import plates
 from processing.processors.claude_condition import ClaudeConditionProcessor
@@ -160,6 +160,19 @@ SEARCH_INTERVALS = (5, 10, 15, 30, 60)
 MAX_SEARCHES_PER_CHAT = int(os.getenv("MAX_SEARCHES_PER_CHAT", "5"))
 MAX_LINKS_PER_SEARCH = 5  # extra Yad2 links under one search
 MAX_NAME_LENGTH = 60
+# The limits of a search's link that the Scans page edits: (URL parameter, label).
+FILTER_FIELDS = (("price", "Price ₪"), ("year", "Year"), ("km", "Km"), ("hand", "Hand"))
+assert tuple(key for key, _ in FILTER_FIELDS) == RANGE_FILTERS
+
+
+def _limit(text: str) -> int | None:
+    """A limit typed in the filters form ("120,000"); None when left empty."""
+    text = text.strip().replace(",", "")
+    if not text:
+        return None
+    if not text.isdigit():
+        raise ValueError("Filters take whole numbers; leave a field empty for no limit.")
+    return int(text)
 
 
 def _phone(number: str | None) -> str:
@@ -268,6 +281,7 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
             "scans.html",
             {
                 "searches": queries.search_statuses(engine),
+                "filter_fields": FILTER_FIELDS,
                 "history": queries.scan_history(engine, chat_id=chat_id, search_id=search_id),
                 "counts": queries.scan_counts(engine, utcnow() - datetime.timedelta(days=1)),
                 "chat": chat_id,
@@ -329,6 +343,30 @@ def create_app(engine: Engine | None = None, store=None, authenticator=None) -> 
         message = (
             f"Added {describe_search(link.url)} to {search.label}. "
             "The bot starts scanning it within a minute."
+        )
+        return RedirectResponse(f"/scans?{urlencode({'notice': message})}", status_code=303)
+
+    @pages.post("/searches/{search_id}/filters")
+    async def change_filters(request: Request, search_id: int):
+        _same_origin(request)
+        form = dict(parse_qsl((await request.body()).decode()))
+        search = search_store.get_search(search_id)
+        if search is None:
+            raise HTTPException(404, "Search not found")
+        try:
+            ranges = {
+                key: (_limit(form.get(f"{key}_min", "")), _limit(form.get(f"{key}_max", "")))
+                for key in RANGE_FILTERS
+            }
+            url = with_ranges(search.url, ranges)
+            if url == search.url:
+                return RedirectResponse(f"/scans?{urlencode({'notice': 'Filters unchanged.'})}", status_code=303)
+            search = search_store.set_url(search_id, url)
+        except ValueError as error:
+            return RedirectResponse(f"/scans?{urlencode({'error': str(error)})}", status_code=303)
+        message = (
+            f"Filters changed: {describe_search(search.url)}. The next scan uses them; "
+            "cars that no longer match stay in the catalog."
         )
         return RedirectResponse(f"/scans?{urlencode({'notice': message})}", status_code=303)
 

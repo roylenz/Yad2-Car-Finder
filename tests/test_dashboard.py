@@ -130,6 +130,45 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("Stopped", stopped.text)
         self.assertNotIn(added, self.state.chat_searches(1))
 
+    def test_a_search_links_filters_are_edited_on_the_scans_page(self):
+        url = "https://www.yad2.co.il/vehicles/cars?manufacturer=19&year=2020--1&price=-1-120000"
+        search, _ = self.state.add_search(1, url, 10)
+        page = self.client.get("/scans").text
+        self.assertIn(f'action="/searches/{search.id}/filters"', page)
+        self.assertIn('name="price_max" value="120000"', page)
+        self.assertIn('name="year_min" value="2020"', page)
+        self.assertIn('name="hand_max" value=""', page)
+
+        same = {"year_min": "2020", "price_max": "120000"}
+        self.assertIn("Filters unchanged", self.client.post(f"/searches/{search.id}/filters", data=same).text)
+        self.assertEqual(self.state.get_search(search.id).url, url)
+
+        # A new maximum, a new filter and a dropped one; the rest of the link is kept.
+        changed = self.client.post(
+            f"/searches/{search.id}/filters", data={"price_max": "100,000", "hand_max": "2"}
+        )
+        self.assertIn("up to ₪100,000 · hand ≤2", changed.text)
+        self.assertEqual(
+            self.state.get_search(search.id).url,
+            "https://www.yad2.co.il/vehicles/cars?manufacturer=19&price=-1-100000&hand=-1-2",
+        )
+
+        self.state.add_search(1, "https://www.yad2.co.il/vehicles/cars?manufacturer=19&price=-1-120000", 10)
+        for data, message in (
+            ({"price_min": "90000", "price_max": "80000"}, "above the maximum"),
+            ({"price_max": "cheap"}, "whole numbers"),
+            ({"price_max": "120000"}, "already tracks"),  # the chat's other search
+        ):
+            with self.subTest(data=data):
+                self.assertIn(message, self.client.post(f"/searches/{search.id}/filters", data=data).text)
+        only_price, _ = self.state.add_search(1, "https://www.yad2.co.il/vehicles/cars?price=-1-50000", 10)
+        self.assertIn("at least one filter", self.client.post(f"/searches/{only_price.id}/filters", data={}).text)
+        self.assertEqual(self.client.post("/searches/999/filters", data={}).status_code, 404)
+        foreign = self.client.post(
+            f"/searches/{search.id}/filters", data={}, headers={"origin": "https://evil.example"}
+        )
+        self.assertEqual(foreign.status_code, 403)
+
     def test_pages_can_be_limited_to_one_search(self):
         corolla = self.state.chat_searches(1)[0]
         electric, _ = self.state.add_search(1, "https://www.yad2.co.il/vehicles/cars?carTag=6&price=1-100000", 10)

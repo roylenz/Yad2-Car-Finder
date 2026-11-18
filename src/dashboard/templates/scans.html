@@ -28,18 +28,45 @@
   ul.links li { border-top: 1px solid var(--border); padding-top: 6px; font-size: 13px; }
   ul.links form { display: inline; }
   ul.links button.stop { padding: 1px 8px; font-size: 12px; }
+  details.filters { margin-top: 8px; font-size: 13px; }
+  details.filters summary { cursor: pointer; color: var(--text-secondary); }
+  details.filters form { display: grid; gap: 6px; margin-top: 8px; }
+  details.filters .range { display: grid; grid-template-columns: 4.5em 1fr auto 1fr; gap: 6px; align-items: center; }
+  details.filters input {
+    width: 100%; min-width: 0; font: inherit; font-size: 13px; padding: 3px 8px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
+  }
+  details.filters button { justify-self: start; font-size: 13px; padding: 3px 10px; cursor: pointer; }
 </style>
 {% endblock %}
+{% macro filters_form(item) %}
+<details class="filters">
+  <summary>Edit filters</summary>
+  <form method="post" action="/searches/{{ item.id }}/filters">
+    {% for key, label in filter_fields %}
+    {% set low, high = item.ranges[key] %}
+    <div class="range">
+      <span class="muted">{{ label }}</span>
+      <input type="number" name="{{ key }}_min" value="{{ low if low is not none }}" min="0" step="1" placeholder="from" aria-label="{{ label }} from">
+      <span class="muted">–</span>
+      <input type="number" name="{{ key }}_max" value="{{ high if high is not none }}" min="0" step="1" placeholder="to" aria-label="{{ label }} to">
+    </div>
+    {% endfor %}
+    <button type="submit">Save filters</button>
+  </form>
+</details>
+{% endmacro %}
 {% block content %}
 <h1>Scans</h1>
-<p class="muted">Times are Israel time. This page refreshes every 20 seconds while you're not typing a search.</p>
+<p class="muted">Times are Israel time. This page refreshes every 20 seconds while you're not typing a search or editing filters.</p>
 <script>
   setInterval(() => {
     const active = document.activeElement;
     const busy = active && (active.tagName === "SELECT" || active.tagName === "INPUT");
     const typed = [...document.querySelectorAll("input[name=url], input[name=name]")]
       .some(field => field.value !== field.defaultValue);
-    if (!busy && !typed) location.reload();
+    const editing = document.querySelector("details.filters[open]");
+    if (!busy && !typed && !editing) location.reload();
   }, 20000);
 </script>
 
@@ -106,10 +133,12 @@
         <form method="post" action="/searches/{{ link.id }}/stop">
           <button type="submit" class="stop">Remove</button>
         </form>
+        {{ filters_form(link) }}
       </li>
       {% endfor %}
     </ul>
     {% endif %}
+    {{ filters_form(search) }}
     <form method="post" action="/searches/{{ search.id }}/links" class="inline-form">
       <input type="url" name="url" required placeholder="Add another Yad2 link to this search" dir="ltr" aria-label="Another Yad2 link">
       <button type="submit">Add link</button>

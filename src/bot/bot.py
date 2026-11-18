@@ -54,6 +54,7 @@ async def restore_searches(app: Application) -> None:
     pipeline.start()
     app.bot_data["pipeline"] = pipeline
     restored, _ = sync_searches(app.job_queue)
+    edited_searches()  # remember the links as they are now
     logger.info("Restored saved searches", count=restored)
     # Searches added or stopped on the dashboard are picked up within a minute.
     app.job_queue.run_repeating(_sync_job, interval=30, first=30, name="sync_searches")
@@ -84,6 +85,19 @@ def sync_searches(job_queue) -> tuple[int, list]:
     return len(saved), changed
 
 
+_search_urls: dict[int, str] = {}
+
+
+def edited_searches() -> list:
+    """Searches and extra links whose Yad2 link changed (filters edited on the dashboard)
+    since the last call."""
+    saved = [search for search in scanner.state.all_searches() if scanner.access_check(search.chat_id)]
+    edited = [search for search in saved if _search_urls.get(search.id, search.url) != search.url]
+    _search_urls.clear()
+    _search_urls.update({search.id: search.url for search in saved})
+    return edited
+
+
 def _interval_seconds(job) -> float | None:
     """Seconds between a repeating job's runs (None for a one-time job)."""
     interval = getattr(getattr(job.job, "trigger", None), "interval", None)
@@ -104,6 +118,14 @@ async def _sync_job(context) -> None:
                 f"I'll check it every {search.interval_minutes} minutes."
             )
         await context.bot.send_message(search.chat_id, text)
+    for search in edited_searches():
+        main = scanner.state.main_search(search)
+        where = f" of {main.label}" if search.parent_id is not None or main.name else ""
+        await context.bot.send_message(
+            search.chat_id,
+            f"✏️ Filters{where} changed on the dashboard: {describe_search(search.url)}. "
+            "I'll use them from the next scan.",
+        )
     _, changed = sync_searches(context.job_queue)
     for search in changed:
         if search.parent_id is not None:
