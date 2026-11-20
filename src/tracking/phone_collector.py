@@ -12,7 +12,7 @@ import random
 from collections.abc import Callable
 
 from car import seller_phone
-from car.car_finder import Yad2CarFinder
+from car.car_finder import Yad2CarFinder, stop_browser
 from common.logger import logger
 from storage.ads import AdRepository
 
@@ -56,6 +56,6 @@ class PhoneCollector:
                 found += contact.phone is not None
                 await asyncio.sleep(random.uniform(*PAUSE_SECONDS))
         finally:
-            browser.stop()
+            await stop_browser(browser)
         logger.info("Seller numbers read", found=found, tried=len(pending))
         return found

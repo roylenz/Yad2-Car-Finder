@@ -19,6 +19,8 @@
 - All I/O operations must be async (browser automation, file writes, Telegram API)
 - Use `nodriver` for browser automation (not Selenium)
 - Start Chrome through `Yad2CarFinder._start_browser`: nodriver waits under 3 s for Chrome to answer and the Pi is sometimes slower, so it tries 3 times and stops the unanswered Chrome nodriver leaves running (`stop_unconnected_browsers`)
+- Stop Chrome with `await stop_browser(browser)`, never `browser.stop()` alone: nodriver deletes its temporary profile (`/tmp/uc_*`, ~180 MB) only at interpreter exit, so a long-running bot leaked one per scan and filled the Pi's disk. Leftovers are swept at startup and by the disk check (`remove_stale_profiles`)
+- `tracking/disk_watch.py` checks the root and `DATA_DIR` filesystems every 30 min and messages the admins on Telegram at `DISK_ALERT_PERCENT` (default 85): again every 12 h or +5 points while high, all-clear 5 points below
 
 - Use `python-telegram-bot` v22+ for Telegram bot (natively async)
 - Use `asyncio.sleep()` instead of `time.sleep()`
@@ -91,6 +93,7 @@ src/
     background.py            # BackgroundPipeline: photos, processors, sale follow-up, then seller numbers; woken after each scan
     sale_watch.py            # removed ads with a plate: registry ownership checked ~12h for a week → sold / not_seen
     phone_collector.py       # ads missing the seller's number or name: opened between scans (15/round, 3 tries, 1 for ads with no contact button), saved to ads.seller_phone/seller_name; scans read it for new ads
+    disk_watch.py            # disk usage alert to admins (DISK_ALERT_PERCENT) + leftover Chrome profile sweep
   processing/
     base.py                  # Processor interface (target "photo" or "ad")
     registry.py              # available processors, PROCESSORS env var

@@ -4,6 +4,8 @@ import json
 import os
 import random
 import re
+import shutil
+import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import replace
@@ -37,7 +39,65 @@ async def stop_unconnected_browsers() -> None:
             except asyncio.TimeoutError:
                 process.kill()
                 await process.wait()
+        _remove_profile(browser)
         util.get_registered_instances().discard(browser)
+
+
+def _remove_profile(browser) -> None:
+    """Delete the temporary Chrome profile nodriver made for this browser (/tmp/uc_*)."""
+    config = getattr(browser, "config", None)
+    if config is None or config.uses_custom_data_dir or not config.user_data_dir:
+        return
+    shutil.rmtree(config.user_data_dir, ignore_errors=True)
+
+
+async def stop_browser(browser: uc.Browser) -> None:
+    """Stop Chrome and delete its temporary profile.
+
+    nodriver deletes the profile only when Python exits, so a bot that runs for days left one
+    ~180 MB folder per scan in /tmp and filled the Pi's disk. Always stop browsers through this.
+    """
+    from nodriver.core import util
+
+    browser.stop()
+    process = getattr(browser, "_process", None)
+    if process is not None:
+        try:
+            await asyncio.wait_for(process.wait(), 10)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+    await asyncio.to_thread(_remove_profile, browser)
+    util.get_registered_instances().discard(browser)
+
+
+STALE_PROFILE_SECONDS = 3600
+
+
+def remove_stale_profiles(min_age: float = STALE_PROFILE_SECONDS) -> int:
+    """Delete leftover nodriver profiles (/tmp/uc_*) not used by a running browser and untouched
+    for `min_age` seconds. Returns how many were removed."""
+    from nodriver.core import util
+
+    in_use = {
+        str(browser.config.user_data_dir)
+        for browser in util.get_registered_instances()
+        if getattr(browser, "config", None) is not None
+    }
+    removed = 0
+    for path in Path(tempfile.gettempdir()).glob("uc_*"):
+        try:
+            if not path.is_dir() or str(path) in in_use:
+                continue
+            if time.time() - path.stat().st_mtime < min_age:
+                continue
+        except OSError:
+            continue
+        shutil.rmtree(path, ignore_errors=True)
+        removed += 1
+    if removed:
+        logger.info("Removed leftover Chrome profiles", count=removed)
+    return removed
 
 
 class PageLoadError(CustomException):
@@ -638,7 +698,7 @@ class Yad2CarFinder:
                 list(listings.values()), removed, left_search, len(to_fetch) + len(missing)
             )
         finally:
-            browser.stop()
+            await stop_browser(browser)
 
     @staticmethod
     async def _dom_page_count(tab: uc.Tab) -> int:

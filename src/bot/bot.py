@@ -39,7 +39,9 @@ from bot.handlers import (
 )
 from bot.scanner import first_delay, schedule_scan
 from car.search_url import describe_search
+from car.car_finder import remove_stale_profiles
 from tracking.background import BackgroundPipeline
+from tracking.disk_watch import CHECK_SECONDS, DiskWatch
 
 
 async def restore_searches(app: Application) -> None:
@@ -58,6 +60,9 @@ async def restore_searches(app: Application) -> None:
     logger.info("Restored saved searches", count=restored)
     # Searches added or stopped on the dashboard are picked up within a minute.
     app.job_queue.run_repeating(_sync_job, interval=30, first=30, name="sync_searches")
+    # No browser runs yet, so every leftover Chrome profile can go.
+    remove_stale_profiles(min_age=0)
+    app.job_queue.run_repeating(DiskWatch().check, interval=CHECK_SECONDS, first=60, name="disk_watch")
 
 
 def sync_searches(job_queue) -> tuple[int, list]:
