@@ -29,14 +29,18 @@ def alert_percent() -> float:
 
 
 def watched_paths() -> dict[str, str]:
-    """Name → path, one per filesystem."""
+    """Name → path, one per filesystem.
+
+    Inside Docker the overlay root and a volume on the same disk have different st_dev, so a
+    filesystem is recognised by its size and usage instead."""
     paths = {"System disk": "/", "Data": os.getenv("DATA_DIR", "/app/data")}
     seen, result = set(), {}
     for name, path in paths.items():
         try:
-            device = os.stat(path).st_dev
+            total, used, _ = shutil.disk_usage(path)
         except OSError:
             continue
+        device = (total, used // 2**30)
         if device not in seen:
             seen.add(device)
             result[name] = path
